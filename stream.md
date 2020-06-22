@@ -25,3 +25,4 @@
 ## Done
 
 - init project and stream
+- started a poc that scans a section outline using blackfriday v2's node walking
