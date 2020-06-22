@@ -17,10 +17,11 @@
 - iso parser
 - data model
 - take gomarkdown for a spin
-- take blackfriday for a spin
 
 ## WIP
 
-- init project and stream
+- take blackfriday for a spin
 
 ## Done
+
+- init project and stream
