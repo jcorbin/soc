@@ -4,11 +4,14 @@ package main
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/russross/blackfriday"
@@ -42,32 +45,38 @@ func main() {
 }
 
 func scanOutline(node *blackfriday.Node) (err error) {
-	var nom, buf bytes.Buffer
-	nom.Grow(1024)
+	var buf bytes.Buffer
 	buf.Grow(4096)
-	walkOutline(node, func(path []*blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
+	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
+		var t itemTime
+		t.loc = time.Local
+		var a string
+		buf.Reset()
+
 		defer func() {
-			if _, err = buf.WriteTo(out); err != nil {
+			if _, err = fmt.Fprintf(out, "% 5s @%v %s\n", a, t, buf.Bytes()); err != nil {
 				status = blackfriday.Terminate
 			}
 		}()
 
-		nom.Reset()
-		collectTitle(&nom, path[len(path)-1])
-
-		if entering {
-			if skip.Any(nom.Bytes()) {
-				status = blackfriday.SkipChildren
-				buf.WriteString("ESKIP ")
-			} else {
-				buf.WriteString("ENTER ")
-			}
+		if !visit.Entering() {
+			a = "EXIT"
+		} else if skip.AnyString(visit.Title(visit.Len() - 1)) {
+			status = blackfriday.SkipChildren
+			a = "ESKIP"
 		} else {
-			buf.WriteString(" EXIT ")
+			a = "ENTER"
 		}
 
-		for i, node := range path {
-			if i > 0 {
+		for i := 0; i < visit.Len(); i++ {
+			node := visit.Node(i)
+			title := visit.Title(i)
+			title = t.Parse(title)
+			if title == "" {
+				continue
+			}
+
+			if buf.Len() > 0 {
 				buf.WriteString(" > ")
 			}
 			switch node.Type {
@@ -79,26 +88,37 @@ func scanOutline(node *blackfriday.Node) (err error) {
 				buf.WriteByte('?')
 			}
 			buf.WriteByte('[')
-			collectTitle(&buf, node)
+			buf.WriteString(title)
 			buf.WriteByte(']')
 		}
-		buf.WriteByte('\n')
+
 		return status
 	})
 	return err
 }
 
-type outlineVisitor func(path []*blackfriday.Node, entering bool) blackfriday.WalkStatus
+type outlineVistData interface {
+	Entering() bool
+	Len() int
+	Node(i int) *blackfriday.Node
+	Title(i int) string
+}
+
+type outlineVisitor func(visit outlineVistData) blackfriday.WalkStatus
 
 func walkOutline(node *blackfriday.Node, visitor outlineVisitor) {
 	var o outlineWalker
+	o.tmp.Grow(1024)
 	o.walk(node, visitor)
 }
 
 type outlineWalker struct {
 	// TODO wants to extend blackfriday.nodeWalker rather than wrap blackfriday.Node.Walk
-	path []*blackfriday.Node
-	skip []bool
+	path  []*blackfriday.Node
+	title []string
+	skip  []bool
+
+	tmp bytes.Buffer
 }
 
 func (o *outlineWalker) find(where func(i int) bool) int {
@@ -112,6 +132,28 @@ func (o *outlineWalker) find(where func(i int) bool) int {
 	return i
 }
 
+type outlineWalkerData struct {
+	entering bool
+	path     []*blackfriday.Node
+	title    []string
+
+	tmp *bytes.Buffer
+}
+
+func (wd outlineWalkerData) Entering() bool               { return wd.entering }
+func (wd outlineWalkerData) Len() int                     { return len(wd.path) }
+func (wd outlineWalkerData) Node(i int) *blackfriday.Node { return wd.path[i] }
+func (wd outlineWalkerData) Title(i int) string {
+	t := wd.title[i]
+	if t == "" {
+		wd.tmp.Reset()
+		collectTitle(wd.tmp, wd.path[i])
+		t = wd.tmp.String()
+		wd.title[i] = t
+	}
+	return t
+}
+
 func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (status blackfriday.WalkStatus) {
 	var skip bool
 	i := len(o.skip)
@@ -119,9 +161,10 @@ func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (s
 		skip = o.skip[j]
 	}
 	o.path = append(o.path, node)
+	o.title = append(o.title, "")
 	o.skip = append(o.skip, skip)
 	if !skip {
-		status = visitor(o.path, true)
+		status = visitor(outlineWalkerData{true, o.path, o.title, &o.tmp})
 		if status == blackfriday.SkipChildren {
 			o.skip[i] = true
 		}
@@ -132,13 +175,14 @@ func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (s
 func (o *outlineWalker) exitTo(i int, visitor outlineVisitor) blackfriday.WalkStatus {
 	defer func() {
 		o.path = o.path[:i]
+		o.title = o.title[:i]
 		o.skip = o.skip[:i]
 	}()
 	for j := len(o.path) - 1; j >= 0 && i <= j; j-- {
 		if o.skip[j] {
 			continue
 		}
-		if st := visitor(o.path[:j+1], false); st >= blackfriday.Terminate {
+		if st := visitor(outlineWalkerData{false, o.path[:j+1], o.title, &o.tmp}); st >= blackfriday.Terminate {
 			return st
 		}
 	}
@@ -289,6 +333,15 @@ func (pl *patternList) Any(b []byte) bool {
 	return false
 }
 
+func (pl *patternList) AnyString(s string) bool {
+	for _, p := range pl.patterns {
+		if p.MatchString(s) {
+			return true
+		}
+	}
+	return false
+}
+
 func (pl *patternList) String() string {
 	if pl == nil {
 		return ""
@@ -309,4 +362,129 @@ func (pl *patternList) Set(s string) error {
 		pl.patterns = append(pl.patterns, p)
 	}
 	return err
+}
+
+type timeLevel uint
+
+const (
+	timeLevelNone timeLevel = iota
+	timeLevelYear
+	timeLevelMonth
+	timeLevelDay
+	timeLevelHour
+	timeLevelMinute
+)
+
+type itemTime struct {
+	level  timeLevel
+	year   int
+	month  time.Month
+	day    int
+	hour   int
+	minute int
+	loc    *time.Location
+}
+
+func (t itemTime) Time() time.Time {
+	switch t.level {
+	case timeLevelNone:
+	case timeLevelYear:
+		return time.Date(t.year, 1, 1, 0, 0, 0, 0, t.loc)
+	case timeLevelMonth:
+		return time.Date(t.year, t.month, 1, 0, 0, 0, 0, t.loc)
+	case timeLevelDay:
+		return time.Date(t.year, t.month, t.day, 0, 0, 0, 0, t.loc)
+	case timeLevelHour:
+		return time.Date(t.year, t.month, t.day, t.hour, 0, 0, 0, t.loc)
+	case timeLevelMinute:
+		return time.Date(t.year, t.month, t.day, t.hour, t.minute, 0, 0, t.loc)
+	}
+	return time.Time{}
+}
+
+func (t itemTime) String() string {
+	tt := t.Time()
+	switch t.level {
+	case timeLevelNone:
+	case timeLevelYear:
+		return tt.Format("2006")
+	case timeLevelMonth:
+		return tt.Format("2006-01")
+	case timeLevelDay:
+		return tt.Format("2006-01-02")
+	case timeLevelHour:
+		return tt.Format("2006-01-02T15Z07")
+	case timeLevelMinute:
+		return tt.Format("2006-01-02T15:04Z07")
+	}
+	return ""
+}
+
+func (t *itemTime) Parse(s string) (rest string) {
+	if t.level >= timeLevelMinute {
+		return s
+	}
+
+	if rest == "" {
+		rest = strings.TrimLeftFunc(s, unicode.IsSpace)
+	}
+	for len(rest) > 0 && t.level < timeLevelMinute {
+		next := strings.TrimLeft(rest, " ")
+		if t.level < timeLevelHour {
+			if next[0] == '-' || next[0] == '/' {
+				next = next[1:]
+			}
+		} else {
+			if next[0] == ':' {
+				next = next[1:]
+			}
+		}
+
+		i := 0
+		for i < len(next) && '0' <= next[i] && next[i] <= '9' {
+			i++
+		}
+		part := next[:i]
+		next = next[i:]
+
+		num, err := strconv.Atoi(part)
+		if err != nil {
+			return rest
+		}
+
+		switch t.level {
+		case timeLevelNone:
+			t.year = num
+
+		case timeLevelYear:
+			if num == 0 || num > 12 {
+				return rest
+			}
+			t.month = time.Month(num)
+
+		case timeLevelMonth:
+			// TODO stricter max day-of-month logic
+			if num == 0 || num > 31 {
+				return rest
+			}
+			t.day = num
+
+		case timeLevelDay:
+			if num > 24 {
+				return rest
+			}
+			t.hour = num
+
+		case timeLevelHour:
+			if num > 24 {
+				return rest
+			}
+			t.minute = num
+
+		}
+		t.level++
+
+		rest = next
+	}
+	return rest
 }
