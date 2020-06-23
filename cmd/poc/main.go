@@ -3,65 +3,87 @@ package main
 
 import (
 	"bytes"
-	"io"
+	"flag"
 	"io/ioutil"
 	"log"
 	"os"
+	"regexp"
+	"strings"
 	"unicode"
 
 	"github.com/russross/blackfriday"
 )
 
+var (
+	in  = os.Stdin
+	out = os.Stdout
+
+	skip patternList
+)
+
 func main() {
-	if err := run(os.Stdin, os.Stdout); err != nil {
+	flag.Var(&skip, "skip", "skip outline items that match any given pattern")
+	flag.Parse()
+
+	var (
+		err error
+		b   []byte
+	)
+	b, err = ioutil.ReadAll(in)
+	if err == nil {
+		md := blackfriday.New()
+		doc := md.Parse(b)
+		err = scanOutline(doc)
+	}
+
+	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func run(in, out *os.File) error {
-	md := blackfriday.New()
+func scanOutline(node *blackfriday.Node) (err error) {
+	var nom, buf bytes.Buffer
+	nom.Grow(1024)
+	buf.Grow(4096)
+	walkOutline(node, func(path []*blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
+		defer func() {
+			if _, err = buf.WriteTo(out); err != nil {
+				status = blackfriday.Terminate
+			}
+		}()
 
-	b, err := ioutil.ReadAll(in)
-	if err != nil {
-		return err
-	}
-	doc := md.Parse(b)
+		nom.Reset()
+		collectTitle(&nom, path[len(path)-1])
 
-	return scanOutline(doc, out)
-}
-
-func scanOutline(node *blackfriday.Node, out io.Writer) (err error) {
-	var tmp bytes.Buffer
-	tmp.Grow(4096)
-
-	walkOutline(node, func(path []*blackfriday.Node, entering bool) blackfriday.WalkStatus {
-		if !entering {
-			return blackfriday.GoToNext
+		if entering {
+			if skip.Any(nom.Bytes()) {
+				status = blackfriday.SkipChildren
+				buf.WriteString("ESKIP ")
+			} else {
+				buf.WriteString("ENTER ")
+			}
+		} else {
+			buf.WriteString(" EXIT ")
 		}
 
 		for i, node := range path {
 			if i > 0 {
-				tmp.WriteString(" > ")
+				buf.WriteString(" > ")
 			}
 			switch node.Type {
 			case blackfriday.Heading:
-				tmp.WriteByte('#')
+				buf.WriteByte('#')
 			case blackfriday.Item:
-				tmp.WriteByte('-')
+				buf.WriteByte('-')
 			default:
-				tmp.WriteByte('?')
+				buf.WriteByte('?')
 			}
-			tmp.WriteByte('[')
-			collectTitle(&tmp, node)
-			tmp.WriteByte(']')
+			buf.WriteByte('[')
+			collectTitle(&buf, node)
+			buf.WriteByte(']')
 		}
-		tmp.WriteByte('\n')
-
-		if _, err = tmp.WriteTo(out); err != nil {
-			return blackfriday.Terminate
-		}
-
-		return blackfriday.GoToNext
+		buf.WriteByte('\n')
+		return status
 	})
 	return err
 }
@@ -76,6 +98,7 @@ func walkOutline(node *blackfriday.Node, visitor outlineVisitor) {
 type outlineWalker struct {
 	// TODO wants to extend blackfriday.nodeWalker rather than wrap blackfriday.Node.Walk
 	path []*blackfriday.Node
+	skip []bool
 }
 
 func (o *outlineWalker) find(where func(i int) bool) int {
@@ -89,7 +112,41 @@ func (o *outlineWalker) find(where func(i int) bool) int {
 	return i
 }
 
+func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (status blackfriday.WalkStatus) {
+	var skip bool
+	i := len(o.skip)
+	if j := i - 1; j >= 0 {
+		skip = o.skip[j]
+	}
+	o.path = append(o.path, node)
+	o.skip = append(o.skip, skip)
+	if !skip {
+		status = visitor(o.path, true)
+		if status == blackfriday.SkipChildren {
+			o.skip[i] = true
+		}
+	}
+	return status
+}
+
+func (o *outlineWalker) exitTo(i int, visitor outlineVisitor) blackfriday.WalkStatus {
+	defer func() {
+		o.path = o.path[:i]
+		o.skip = o.skip[:i]
+	}()
+	for j := len(o.path) - 1; j >= 0 && i <= j; j-- {
+		if o.skip[j] {
+			continue
+		}
+		if st := visitor(o.path[:j+1], false); st >= blackfriday.Terminate {
+			return st
+		}
+	}
+	return blackfriday.GoToNext
+}
+
 func (o *outlineWalker) walk(node *blackfriday.Node, visitor outlineVisitor) {
+	defer o.exitTo(0, visitor)
 	node.Walk(func(n *blackfriday.Node, entering bool) blackfriday.WalkStatus {
 		switch n.Type {
 
@@ -100,18 +157,15 @@ func (o *outlineWalker) walk(node *blackfriday.Node, visitor outlineVisitor) {
 			if !entering {
 				return blackfriday.GoToNext
 			}
-
-			if i := o.find(func(i int) bool {
+			if st := o.exitTo(o.find(func(i int) bool {
 				return o.path[i].Type == blackfriday.Heading && o.path[i].Level < n.Level
-			}) + 1; i < len(o.path) {
-				o.path = o.path[:i]
-				if st := visitor(o.path, false); st >= blackfriday.Terminate {
-					return st
-				}
+			})+1, visitor); st >= blackfriday.Terminate {
+				return st
 			}
-
-			o.path = append(o.path, n)
-			return maxStatus(blackfriday.SkipChildren, visitor(o.path, true))
+			if st := o.enter(n, visitor); st > blackfriday.GoToNext {
+				return st
+			}
+			return blackfriday.SkipChildren
 
 		case blackfriday.List:
 			// TODO definition list semantics?
@@ -119,33 +173,15 @@ func (o *outlineWalker) walk(node *blackfriday.Node, visitor outlineVisitor) {
 
 		case blackfriday.Item:
 			if !entering {
-				if i := o.find(func(i int) bool { return o.path[i] == n }); i < len(o.path) {
-					if i < 0 {
-						i = 0
-					}
-					o.path = o.path[:i]
-					if st := visitor(o.path, false); st >= blackfriday.Terminate {
-						return st
-					}
-				}
-				return blackfriday.GoToNext
+				return o.exitTo(o.find(func(i int) bool { return o.path[i] == n }), visitor)
 			}
-
-			o.path = append(o.path, n)
-			return visitor(o.path, true)
+			return o.enter(n, visitor)
 
 		default:
 			// _, err = fmt.Fprintf(out, "SKIP entering:%v %v <- %v\n", entering, n, n.Parent)
 			return blackfriday.SkipChildren
 		}
 	})
-}
-
-func maxStatus(a, b blackfriday.WalkStatus) blackfriday.WalkStatus {
-	if b > a {
-		return b
-	}
-	return a
 }
 
 func collectTitle(buf *bytes.Buffer, node *blackfriday.Node) {
@@ -238,4 +274,39 @@ func collectItemTitle(buf *bytes.Buffer, node *blackfriday.Node) {
 			return status
 		}
 	})
+}
+
+type patternList struct {
+	patterns []*regexp.Regexp
+}
+
+func (pl *patternList) Any(b []byte) bool {
+	for _, p := range pl.patterns {
+		if p.Match(b) {
+			return true
+		}
+	}
+	return false
+}
+
+func (pl *patternList) String() string {
+	if pl == nil {
+		return ""
+	}
+	var parts []string
+	for _, p := range pl.patterns {
+		parts = append(parts, p.String())
+	}
+	return strings.Join(parts, " ")
+}
+
+func (pl *patternList) Set(s string) error {
+	if s == "" {
+		return nil
+	}
+	p, err := regexp.Compile(s)
+	if err == nil {
+		pl.patterns = append(pl.patterns, p)
+	}
+	return err
 }
