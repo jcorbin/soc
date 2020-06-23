@@ -3,11 +3,11 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"unicode"
 
 	"github.com/russross/blackfriday"
 )
@@ -19,105 +19,223 @@ func main() {
 }
 
 func run(in, out *os.File) error {
+	md := blackfriday.New()
+
 	b, err := ioutil.ReadAll(in)
 	if err != nil {
 		return err
 	}
-
-	md := blackfriday.New()
 	doc := md.Parse(b)
 
-	var p proc
-	p.tmp.Grow(4096)
-	return p.scanOutline(doc, out)
+	return scanOutline(doc, out)
 }
 
-type proc struct {
-	level    []int
-	isHeader []bool
-	title    []string
+func scanOutline(node *blackfriday.Node, out io.Writer) (err error) {
+	var tmp bytes.Buffer
+	tmp.Grow(4096)
 
-	tmp bytes.Buffer
-}
-
-func (p *proc) scanOutline(n *blackfriday.Node, out io.Writer) (err error) {
-	n.Walk(func(n *blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
+	walkOutline(node, func(path []*blackfriday.Node, entering bool) blackfriday.WalkStatus {
 		if !entering {
 			return blackfriday.GoToNext
 		}
-		switch n.Type {
 
-		case blackfriday.Heading:
-			status = blackfriday.SkipChildren
-			p.outoHeaderLevel(n.Level - 1)
-			p.collectText(n)
-			p.into(n.Level, true, p.tmp.String())
-
-			// TODO recognize lists
-
-			p.tmp.Reset()
-			for i := range p.level {
-				if p.tmp.Len() > 0 {
-					p.tmp.WriteString(" > ")
-				}
-				if p.isHeader[i] {
-					p.tmp.WriteByte('#')
-				} else {
-					p.tmp.WriteByte('-')
-				}
-				p.tmp.WriteByte('[')
-				p.tmp.WriteString(p.title[i])
-				p.tmp.WriteByte(']')
+		for i, node := range path {
+			if i > 0 {
+				tmp.WriteString(" > ")
 			}
-			_, err = fmt.Fprintf(out, "%s\n", p.tmp.Bytes())
-
+			switch node.Type {
+			case blackfriday.Heading:
+				tmp.WriteByte('#')
+			case blackfriday.Item:
+				tmp.WriteByte('-')
+			default:
+				tmp.WriteByte('?')
+			}
+			tmp.WriteByte('[')
+			collectTitle(&tmp, node)
+			tmp.WriteByte(']')
 		}
-		if err != nil {
+		tmp.WriteByte('\n')
+
+		if _, err = tmp.WriteTo(out); err != nil {
 			return blackfriday.Terminate
 		}
-		return status
+
+		return blackfriday.GoToNext
 	})
 	return err
 }
 
-func (p *proc) outoLevel(level int) {
-	p.outo(func(i int) bool { return p.level[i] <= level })
+type outlineVisitor func(path []*blackfriday.Node, entering bool) blackfriday.WalkStatus
+
+func walkOutline(node *blackfriday.Node, visitor outlineVisitor) {
+	var o outlineWalker
+	o.walk(node, visitor)
 }
 
-func (p *proc) outoHeaderLevel(level int) {
-	p.outo(func(i int) bool { return p.level[i] <= level && p.isHeader[i] })
+type outlineWalker struct {
+	// TODO wants to extend blackfriday.nodeWalker rather than wrap blackfriday.Node.Walk
+	path []*blackfriday.Node
 }
 
-func (p *proc) outo(whence func(i int) bool) {
-	i := len(p.level) - 1
+func (o *outlineWalker) find(where func(i int) bool) int {
+	i := len(o.path) - 1
 	for i >= 0 {
-		if whence(i) {
+		if where(i) {
 			break
 		}
 		i--
 	}
-	p.truncate(i + 1)
+	return i
 }
 
-func (p *proc) into(level int, isHeader bool, title string) {
-	p.level = append(p.level, level)
-	p.isHeader = append(p.isHeader, isHeader)
-	p.title = append(p.title, title)
-}
+func (o *outlineWalker) walk(node *blackfriday.Node, visitor outlineVisitor) {
+	node.Walk(func(n *blackfriday.Node, entering bool) blackfriday.WalkStatus {
+		switch n.Type {
 
-func (p *proc) truncate(i int) {
-	p.level = p.level[:i]
-	p.isHeader = p.isHeader[:i]
-	p.title = p.title[:i]
-}
+		case blackfriday.Document:
+			return blackfriday.GoToNext
 
-func (p *proc) collectText(n *blackfriday.Node) {
-	p.tmp.Reset()
-	n.Walk(func(n *blackfriday.Node, entering bool) blackfriday.WalkStatus {
-		if entering {
-			// TODO type aware things, e.g. just link titles
-			p.tmp.Write(n.Literal)
+		case blackfriday.Heading:
+			if !entering {
+				return blackfriday.GoToNext
+			}
+
+			if i := o.find(func(i int) bool {
+				return o.path[i].Type == blackfriday.Heading && o.path[i].Level < n.Level
+			}) + 1; i < len(o.path) {
+				o.path = o.path[:i]
+				if st := visitor(o.path, false); st >= blackfriday.Terminate {
+					return st
+				}
+			}
+
+			o.path = append(o.path, n)
+			return maxStatus(blackfriday.SkipChildren, visitor(o.path, true))
+
+		case blackfriday.List:
+			// TODO definition list semantics?
+			return blackfriday.GoToNext
+
+		case blackfriday.Item:
+			if !entering {
+				if i := o.find(func(i int) bool { return o.path[i] == n }); i < len(o.path) {
+					if i < 0 {
+						i = 0
+					}
+					o.path = o.path[:i]
+					if st := visitor(o.path, false); st >= blackfriday.Terminate {
+						return st
+					}
+				}
+				return blackfriday.GoToNext
+			}
+
+			o.path = append(o.path, n)
+			return visitor(o.path, true)
+
+		default:
+			// _, err = fmt.Fprintf(out, "SKIP entering:%v %v <- %v\n", entering, n, n.Parent)
+			return blackfriday.SkipChildren
 		}
-		return blackfriday.GoToNext
+	})
+}
+
+func maxStatus(a, b blackfriday.WalkStatus) blackfriday.WalkStatus {
+	if b > a {
+		return b
+	}
+	return a
+}
+
+func collectTitle(buf *bytes.Buffer, node *blackfriday.Node) {
+	if node == nil {
+		buf.WriteString("<NilNode>")
+		return
+	}
+	switch node.Type {
+
+	case blackfriday.Document:
+		node.Walk(func(n *blackfriday.Node, entering bool) blackfriday.WalkStatus {
+			if entering && (n.Type == blackfriday.Heading || n.Type == blackfriday.Item) {
+				collectItemTitle(buf, n)
+				return blackfriday.Terminate
+			}
+			return blackfriday.GoToNext
+		})
+
+	case blackfriday.List:
+		node.Walk(func(n *blackfriday.Node, entering bool) blackfriday.WalkStatus {
+			if entering && n.Type == blackfriday.Item {
+				collectItemTitle(buf, n)
+				return blackfriday.Terminate
+			}
+			return blackfriday.GoToNext
+		})
+
+	case blackfriday.Item, blackfriday.Heading:
+		collectItemTitle(buf, node)
+
+	// TODO should make tables (resp rows) equivalent to lists (resp items)?
+	// TODO maybe parse subject line from code blocks? use info?
+	// TODO maybe parse subject line from block quotes?
+	// TODO maybe parse first sentence from paragraphs?
+	// TODO maybe parse structure from html blocks?
+
+	default:
+		buf.WriteString("<Unsupported")
+		buf.WriteString(node.Type.String())
+		buf.WriteString(">")
+	}
+}
+
+func collectItemTitle(buf *bytes.Buffer, node *blackfriday.Node) {
+	startLen := buf.Len()
+
+	node.Walk(func(n *blackfriday.Node, entering bool) blackfriday.WalkStatus {
+		switch n.Type {
+
+		case blackfriday.Document, blackfriday.List, blackfriday.Heading:
+			if n != node {
+				return blackfriday.Terminate
+			}
+			if !entering {
+				return blackfriday.Terminate
+			}
+			return blackfriday.GoToNext
+
+		case blackfriday.CodeBlock, blackfriday.HTMLBlock,
+			blackfriday.Table, blackfriday.TableCell, blackfriday.TableHead, blackfriday.TableBody, blackfriday.TableRow:
+			return blackfriday.Terminate
+
+		case blackfriday.Paragraph, blackfriday.Item, blackfriday.BlockQuote:
+			if buf.Len() > startLen {
+				return blackfriday.Terminate
+			}
+			return blackfriday.GoToNext
+
+		// TODO support horizontal rule fencing?
+
+		case blackfriday.Softbreak, blackfriday.Hardbreak:
+			if buf.Len() > startLen {
+				return blackfriday.Terminate
+			}
+			return blackfriday.GoToNext
+
+		// TODO need special support for link, image, or html content?
+		default:
+			status := blackfriday.GoToNext
+			if entering {
+				b := n.Literal
+				if buf.Len() == startLen {
+					b = bytes.TrimLeftFunc(b, unicode.IsSpace)
+				} else if i := bytes.IndexByte(b, '\n'); i >= 0 {
+					b = b[:i]
+					status = blackfriday.Terminate
+				}
+				buf.Write(b)
+			}
+			return status
+		}
 	})
 }
