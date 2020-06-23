@@ -1,4 +1,4 @@
-# 2020-06-22
+# 2020-06-23
 
 ## TODO
 
@@ -13,16 +13,19 @@
   - from prior dones
   - from external code
 - yesterday rollover
-- today scaffolding
-- iso parser
-- data model
-- take gomarkdown for a spin
 
 ## WIP
 
-- take blackfriday for a spin
+- data model
 
 ## Done
 
+- poc: outline walker, with minimal iso time parsing
+- decided to go with blackfriday
+  - v2 has better api than v1
+  - dislike gomarkdown eface usage
+
+# 2020-06-22
+
+- poc: started to learn blackfriday node walking
 - init project and stream
-- started a poc that scans a section outline using blackfriday v2's node walking
