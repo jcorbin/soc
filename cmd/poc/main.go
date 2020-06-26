@@ -48,25 +48,28 @@ func scanOutline(node *blackfriday.Node) (err error) {
 	var buf bytes.Buffer
 	buf.Grow(4096)
 	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
+		if !visit.Entering() {
+			return status
+		}
+
+		if skip.AnyString(visit.Title(visit.Len() - 1)) {
+			return blackfriday.SkipChildren
+		}
+
 		var t itemTime
 		t.loc = time.Local
-		var a string
 		buf.Reset()
 
 		defer func() {
-			if _, err = fmt.Fprintf(out, "% 5s @%v %s\n", a, t, buf.Bytes()); err != nil {
+			if t.Any() {
+				_, err = fmt.Fprintf(out, "%v %s\n", t, buf.Bytes())
+			} else {
+				_, err = fmt.Fprintf(out, "%s\n", buf.Bytes())
+			}
+			if err != nil {
 				status = blackfriday.Terminate
 			}
 		}()
-
-		if !visit.Entering() {
-			a = "EXIT"
-		} else if skip.AnyString(visit.Title(visit.Len() - 1)) {
-			status = blackfriday.SkipChildren
-			a = "ESKIP"
-		} else {
-			a = "ENTER"
-		}
 
 		for i := 0; i < visit.Len(); i++ {
 			node := visit.Node(i)
@@ -77,7 +80,7 @@ func scanOutline(node *blackfriday.Node) (err error) {
 			}
 
 			if buf.Len() > 0 {
-				buf.WriteString(" > ")
+				buf.WriteString(" ")
 			}
 			switch node.Type {
 			case blackfriday.Heading:
@@ -383,6 +386,10 @@ type itemTime struct {
 	hour   int
 	minute int
 	loc    *time.Location
+}
+
+func (t itemTime) Any() bool {
+	return t.level > timeLevelNone
 }
 
 func (t itemTime) Time() time.Time {
