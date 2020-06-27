@@ -4,7 +4,6 @@ package main
 import (
 	"bytes"
 	"flag"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -45,36 +44,65 @@ func main() {
 }
 
 func scanOutline(node *blackfriday.Node) (err error) {
+	var (
+		todayTime   = itemDate(time.Now().Date())
+		firstDay    *blackfriday.Node
+		todayNode   *blackfriday.Node
+		horizonNode *blackfriday.Node
+	)
+
+	walkOutline(node, func(visit outlineVistData) blackfriday.WalkStatus {
+		if !visit.Entering() {
+			return blackfriday.GoToNext
+		}
+
+		if isTemporal(visit) {
+			if firstDay == nil && visit.Time().level == timeLevelDay {
+				firstDay = visit.Node(visit.Len() - 1)
+			}
+			if visit.Time().Equal(todayTime) {
+				todayNode = visit.Node(visit.Len() - 1)
+			}
+		} else if sectionDepth(visit, "Done") == 1 {
+			horizonNode = visit.Node(visit.Len() - 1)
+		}
+
+		return blackfriday.GoToNext
+	})
+
+	if todayNode == nil {
+		todayNode = blackfriday.NewNode(blackfriday.Heading)
+		todayNode.Level = 1
+		if firstDay != nil {
+			todayNode.Level = firstDay.Level
+		}
+
+		// TODO support generating a parent-relative suffix string
+		text := blackfriday.NewNode(blackfriday.Text)
+		text.Literal = []byte(todayTime.String())
+		todayNode.AppendChild(text)
+
+		firstDay.InsertBefore(todayNode)
+	}
+	firstDay.Unlink()
+	horizonNode.Next.InsertBefore(firstDay)
+
 	var buf bytes.Buffer
 	buf.Grow(4096)
-	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
+	walkOutline(node, func(visit outlineVistData) blackfriday.WalkStatus {
 		if !visit.Entering() {
-			return status
+			return blackfriday.GoToNext
 		}
 
 		if skip.AnyString(visit.Title(visit.Len() - 1)) {
 			return blackfriday.SkipChildren
 		}
 
-		var t itemTime
-		t.loc = time.Local
-		buf.Reset()
+		buf.WriteString(visit.Time().String())
 
-		defer func() {
-			if t.Any() {
-				_, err = fmt.Fprintf(out, "%v %s\n", t, buf.Bytes())
-			} else {
-				_, err = fmt.Fprintf(out, "%s\n", buf.Bytes())
-			}
-			if err != nil {
-				status = blackfriday.Terminate
-			}
-		}()
-
+		// build path with pure time components elided
 		for i := 0; i < visit.Len(); i++ {
-			node := visit.Node(i)
 			title := visit.Title(i)
-			title = t.Parse(title)
 			if title == "" {
 				continue
 			}
@@ -82,7 +110,8 @@ func scanOutline(node *blackfriday.Node) (err error) {
 			if buf.Len() > 0 {
 				buf.WriteString(" ")
 			}
-			switch node.Type {
+
+			switch visit.Node(i).Type {
 			case blackfriday.Heading:
 				buf.WriteByte('#')
 			case blackfriday.Item:
@@ -95,28 +124,63 @@ func scanOutline(node *blackfriday.Node) (err error) {
 			buf.WriteByte(']')
 		}
 
-		return status
+		buf.WriteByte('\n')
+		if _, err = buf.WriteTo(out); err != nil {
+			return blackfriday.Terminate
+		}
+
+		return blackfriday.GoToNext
 	})
+
 	return err
 }
 
 type outlineVistData interface {
 	Entering() bool
+	Time() itemTime
 	Len() int
 	Node(i int) *blackfriday.Node
 	Title(i int) string
+}
+
+// isTemporal return true only if the visited item has a time set, but no title
+// strings.
+func isTemporal(visit outlineVistData) bool {
+	if !visit.Time().Any() {
+		return false
+	}
+	for i := 0; i < visit.Len(); i++ {
+		if visit.Title(i) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+// sectionDepth returns a depth level indicating how far under a named section
+// the visited item is: return 0 if not within, 1 for the section item itself,
+// and a value >1 for any sub-item.
+func sectionDepth(visit outlineVistData, name string) (depth int) {
+	for i := 0; i < visit.Len(); i++ {
+		if depth > 0 && visit.Title(i) != "" {
+			depth++
+		} else if depth == 0 && visit.Title(i) == name {
+			depth++
+		}
+	}
+	return depth
 }
 
 type outlineVisitor func(visit outlineVistData) blackfriday.WalkStatus
 
 func walkOutline(node *blackfriday.Node, visitor outlineVisitor) {
 	var o outlineWalker
-	o.tmp.Grow(1024)
 	o.walk(node, visitor)
 }
 
 type outlineWalker struct {
 	// TODO wants to extend blackfriday.nodeWalker rather than wrap blackfriday.Node.Walk
+	t     []itemTime
 	path  []*blackfriday.Node
 	title []string
 	skip  []bool
@@ -137,37 +201,39 @@ func (o *outlineWalker) find(where func(i int) bool) int {
 
 type outlineWalkerData struct {
 	entering bool
+	t        itemTime
 	path     []*blackfriday.Node
 	title    []string
-
-	tmp *bytes.Buffer
 }
 
 func (wd outlineWalkerData) Entering() bool               { return wd.entering }
+func (wd outlineWalkerData) Time() itemTime               { return wd.t }
 func (wd outlineWalkerData) Len() int                     { return len(wd.path) }
 func (wd outlineWalkerData) Node(i int) *blackfriday.Node { return wd.path[i] }
-func (wd outlineWalkerData) Title(i int) string {
-	t := wd.title[i]
-	if t == "" {
-		wd.tmp.Reset()
-		collectTitle(wd.tmp, wd.path[i])
-		t = wd.tmp.String()
-		wd.title[i] = t
-	}
-	return t
-}
+func (wd outlineWalkerData) Title(i int) string           { return wd.title[i] }
 
 func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (status blackfriday.WalkStatus) {
+	var t itemTime
 	var skip bool
-	i := len(o.skip)
+	t.loc = time.Local
+
+	i := len(o.t)
 	if j := i - 1; j >= 0 {
+		t = o.t[j]
 		skip = o.skip[j]
 	}
+
+	o.tmp.Reset()
+	collectTitle(&o.tmp, node)
+	title := t.Parse(o.tmp.String())
+
+	o.t = append(o.t, t)
 	o.path = append(o.path, node)
-	o.title = append(o.title, "")
+	o.title = append(o.title, title)
 	o.skip = append(o.skip, skip)
+
 	if !skip {
-		status = visitor(outlineWalkerData{true, o.path, o.title, &o.tmp})
+		status = visitor(outlineWalkerData{true, t, o.path, o.title})
 		if status == blackfriday.SkipChildren {
 			o.skip[i] = true
 		}
@@ -177,6 +243,7 @@ func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (s
 
 func (o *outlineWalker) exitTo(i int, visitor outlineVisitor) blackfriday.WalkStatus {
 	defer func() {
+		o.t = o.t[:i]
 		o.path = o.path[:i]
 		o.title = o.title[:i]
 		o.skip = o.skip[:i]
@@ -185,7 +252,7 @@ func (o *outlineWalker) exitTo(i int, visitor outlineVisitor) blackfriday.WalkSt
 		if o.skip[j] {
 			continue
 		}
-		if st := visitor(outlineWalkerData{false, o.path[:j+1], o.title, &o.tmp}); st >= blackfriday.Terminate {
+		if st := visitor(outlineWalkerData{false, o.t[j], o.path[:j+1], o.title}); st >= blackfriday.Terminate {
 			return st
 		}
 	}
@@ -378,6 +445,16 @@ const (
 	timeLevelMinute
 )
 
+func itemDate(year int, month time.Month, day int) itemTime {
+	return itemTime{
+		loc:   time.Local,
+		level: timeLevelDay,
+		year:  year,
+		month: month,
+		day:   day,
+	}
+}
+
 type itemTime struct {
 	level  timeLevel
 	year   int
@@ -391,6 +468,44 @@ type itemTime struct {
 func (t itemTime) Any() bool {
 	return t.level > timeLevelNone
 }
+
+func (t itemTime) Equal(other itemTime) bool {
+	if other.level != t.level {
+		return false
+	}
+	switch t.level {
+	case timeLevelMinute:
+		if other.minute != t.minute {
+			return false
+		}
+		fallthrough
+	case timeLevelHour:
+		if other.loc.String() != t.loc.String() {
+			return false
+		}
+		if other.hour != t.hour {
+			return false
+		}
+		fallthrough
+	case timeLevelDay:
+		if other.day != t.day {
+			return false
+		}
+		fallthrough
+	case timeLevelMonth:
+		if other.month != t.month {
+			return false
+		}
+		fallthrough
+	case timeLevelYear:
+		if other.year != t.year {
+			return false
+		}
+	}
+	return true
+}
+
+// TODO func (t itemTime) Contains(other itemTime) bool
 
 func (t itemTime) Time() time.Time {
 	switch t.level {
