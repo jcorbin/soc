@@ -3,11 +3,10 @@ package main
 
 import (
 	"bytes"
-	"flag"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,34 +15,24 @@ import (
 	"github.com/russross/blackfriday"
 )
 
-var (
-	in  = os.Stdin
-	out = os.Stdout
-
-	skip patternList
-)
-
 func main() {
-	flag.Var(&skip, "skip", "skip outline items that match any given pattern")
-	flag.Parse()
-
 	var (
-		err error
-		b   []byte
+		in  = os.Stdin
+		out = os.Stdout
 	)
-	b, err = ioutil.ReadAll(in)
+	b, err := ioutil.ReadAll(in)
 	if err == nil {
 		md := blackfriday.New()
 		doc := md.Parse(b)
-		err = scanOutline(doc)
+		rollover(doc)
+		err = printOutline(out, doc)
 	}
-
 	if err != nil {
 		log.Fatal(err)
 	}
 }
 
-func scanOutline(node *blackfriday.Node) (err error) {
+func rollover(doc *blackfriday.Node) {
 	var (
 		todayTime   = itemDate(time.Now().Date())
 		firstDay    *blackfriday.Node
@@ -51,7 +40,7 @@ func scanOutline(node *blackfriday.Node) (err error) {
 		horizonNode *blackfriday.Node
 	)
 
-	walkOutline(node, func(visit outlineVistData) blackfriday.WalkStatus {
+	walkOutline(doc, func(visit outlineVistData) blackfriday.WalkStatus {
 		if !visit.Entering() {
 			return blackfriday.GoToNext
 		}
@@ -86,16 +75,14 @@ func scanOutline(node *blackfriday.Node) (err error) {
 	}
 	firstDay.Unlink()
 	horizonNode.Next.InsertBefore(firstDay)
+}
 
+func printOutline(out io.Writer, doc *blackfriday.Node) (err error) {
 	var buf bytes.Buffer
 	buf.Grow(4096)
-	walkOutline(node, func(visit outlineVistData) blackfriday.WalkStatus {
+	walkOutline(doc, func(visit outlineVistData) blackfriday.WalkStatus {
 		if !visit.Entering() {
 			return blackfriday.GoToNext
-		}
-
-		if skip.AnyString(visit.Title(visit.Len() - 1)) {
-			return blackfriday.SkipChildren
 		}
 
 		buf.WriteString(visit.Time().String())
@@ -388,50 +375,6 @@ func collectItemTitle(buf *bytes.Buffer, node *blackfriday.Node) {
 			return status
 		}
 	})
-}
-
-type patternList struct {
-	patterns []*regexp.Regexp
-}
-
-func (pl *patternList) Any(b []byte) bool {
-	for _, p := range pl.patterns {
-		if p.Match(b) {
-			return true
-		}
-	}
-	return false
-}
-
-func (pl *patternList) AnyString(s string) bool {
-	for _, p := range pl.patterns {
-		if p.MatchString(s) {
-			return true
-		}
-	}
-	return false
-}
-
-func (pl *patternList) String() string {
-	if pl == nil {
-		return ""
-	}
-	var parts []string
-	for _, p := range pl.patterns {
-		parts = append(parts, p.String())
-	}
-	return strings.Join(parts, " ")
-}
-
-func (pl *patternList) Set(s string) error {
-	if s == "" {
-		return nil
-	}
-	p, err := regexp.Compile(s)
-	if err == nil {
-		pl.patterns = append(pl.patterns, p)
-	}
-	return err
 }
 
 type timeLevel uint
