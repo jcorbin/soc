@@ -16,20 +16,31 @@ import (
 )
 
 func main() {
-	var (
-		in  = os.Stdin
-		out = os.Stdout
-	)
-	b, err := ioutil.ReadAll(in)
-	if err == nil {
-		md := blackfriday.New()
-		doc := md.Parse(b)
-		rollover(doc)
-		err = printOutline(out, doc)
-	}
-	if err != nil {
+	if err := run(os.Stdin, os.Stdout); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func run(in, out *os.File) error {
+	b, err := ioutil.ReadAll(in)
+	if err != nil {
+		return err
+	}
+
+	md := blackfriday.New(blackfriday.WithExtensions(0 |
+		blackfriday.NoIntraEmphasis |
+		// blackfriday.DefinitionLists |
+		// blackfriday.Tables |
+		blackfriday.FencedCode |
+		blackfriday.Autolink |
+		blackfriday.Strikethrough |
+		blackfriday.SpaceHeadings |
+		blackfriday.HeadingIDs |
+		blackfriday.BackslashLineBreak,
+	))
+	doc := md.Parse(b)
+	rollover(doc)
+	return printOutline(out, doc)
 }
 
 func rollover(doc *blackfriday.Node) {
@@ -279,7 +290,6 @@ func (o *outlineWalker) walk(node *blackfriday.Node, visitor outlineVisitor) {
 			return o.enter(n, visitor)
 
 		default:
-			// _, err = fmt.Fprintf(out, "SKIP entering:%v %v <- %v\n", entering, n, n.Parent)
 			return blackfriday.SkipChildren
 		}
 	})
