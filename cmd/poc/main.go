@@ -40,7 +40,8 @@ func run(in, out *os.File) error {
 	))
 	doc := md.Parse(b)
 	rollover(doc)
-	return printOutline(out, doc)
+	// printOutline(out, doc)
+	return WriteNodeInto(doc, out)
 }
 
 func rollover(doc *blackfriday.Node) {
@@ -385,6 +386,265 @@ func collectItemTitle(buf *bytes.Buffer, node *blackfriday.Node) {
 			return status
 		}
 	})
+}
+
+func WriteNodeInto(node *blackfriday.Node, w io.Writer) error {
+	var mw markdownWriter
+	mw.out = w
+	mw.buf.Grow(4096)
+	return mw.writeNode(node)
+}
+
+type markdownWriter struct {
+	out io.Writer
+	buf bytes.Buffer
+
+	stack []renderContext
+	renderContext
+}
+
+type renderContext struct {
+	inLevel  int
+	quote    byte
+	nextItem int
+}
+
+func (mw *markdownWriter) writeNode(node *blackfriday.Node) (err error) {
+	defer func() {
+		if _, werr := mw.buf.WriteTo(mw.out); err == nil {
+			err = werr
+		}
+	}()
+
+	node.Walk(func(n *blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
+		defer func() {
+			if err := mw.maybeFlush(); err != nil {
+				status = blackfriday.Terminate
+			}
+		}()
+
+		switch n.Type {
+		case blackfriday.Document:
+			if !entering {
+				mw.nl(1)
+			}
+
+		case blackfriday.Heading:
+			mw.nl(2)
+			if entering {
+				for i := 0; i < n.Level; i++ {
+					mw.buf.WriteByte('#')
+				}
+				mw.buf.WriteByte(' ')
+			}
+
+		case blackfriday.List:
+			if mw.enter(entering) {
+				if n.Parent.Type != blackfriday.Item {
+					mw.nl(2)
+				}
+				mw.nextItem = 1
+			}
+
+		case blackfriday.Item:
+			// TODO definition list support
+			if mw.enter(entering) {
+				mw.nl(1)
+				mw.indent()
+				start := mw.buf.Len()
+				if n.ListFlags&blackfriday.ListTypeOrdered != 0 {
+					mw.buf.WriteString(strconv.Itoa(mw.nextItem))
+					mw.buf.WriteByte(n.Delimiter)
+				} else if n.BulletChar != 0 {
+					mw.buf.WriteByte(n.BulletChar)
+					mw.buf.WriteByte(' ')
+				}
+				mw.inLevel += mw.buf.Len() - start // TODO runewidth
+			} else {
+				mw.nextItem++
+			}
+
+		case blackfriday.BlockQuote:
+			if mw.enter(entering) {
+				mw.inLevel += 2
+				mw.quote = '>'
+			}
+
+		case blackfriday.Paragraph:
+			if n.Parent.Type != blackfriday.Item || n != n.Parent.FirstChild {
+				mw.nl(2)
+				if entering {
+					mw.indent()
+				}
+			}
+
+		case blackfriday.HorizontalRule:
+			mw.nl(2)
+			if entering {
+				mw.indent()
+				mw.buf.WriteString("---")
+			}
+
+		case blackfriday.Emph:
+			mw.buf.WriteByte('*')
+		case blackfriday.Strong:
+			mw.buf.WriteString("**")
+		case blackfriday.Del:
+			mw.buf.WriteString("~~")
+
+		case blackfriday.Link:
+			// TODO footnote support
+			if entering {
+				mw.buf.WriteByte('[')
+			} else {
+				mw.buf.WriteString("](")
+				mw.buf.Write(n.Destination)
+				mw.buf.WriteByte(')')
+			}
+
+		case blackfriday.Image:
+			if entering {
+				mw.buf.WriteString("![")
+			} else {
+				mw.buf.WriteString("](")
+				mw.buf.Write(n.Destination)
+				mw.buf.WriteByte(')')
+			}
+
+		case blackfriday.Text:
+			if entering {
+				for b := n.Literal; len(b) > 0; {
+					i := bytes.IndexByte(b, '\n')
+					if i < 0 {
+						mw.buf.Write(b)
+						break
+					}
+					mw.buf.Write(b[:i])
+					mw.nl(1)
+					mw.indent()
+					b = b[i+1:]
+				}
+			}
+
+		case blackfriday.CodeBlock:
+			mw.nl(1)
+			mw.buf.WriteString("```")
+			mw.buf.Write(n.Info)
+			mw.nl(1)
+			mw.buf.Write(n.Literal)
+			mw.nl(1)
+			mw.buf.WriteString("```")
+
+		case blackfriday.Code:
+			mw.buf.WriteByte('`')
+			mw.buf.Write(n.Literal)
+			mw.buf.WriteByte('`')
+
+		case blackfriday.Hardbreak:
+			mw.buf.WriteByte('\\')
+			fallthrough
+		case blackfriday.Softbreak:
+			mw.nl(1)
+
+		case blackfriday.HTMLSpan, blackfriday.HTMLBlock:
+			mw.buf.Write(n.Literal)
+
+		// TODO table support
+
+		default:
+			mw.unsup(n.Type.String(), entering)
+		}
+
+		return blackfriday.GoToNext
+	})
+
+	return err
+}
+
+func (mw *markdownWriter) enter(entering bool) bool {
+	if entering {
+		mw.stack = append(mw.stack, mw.renderContext)
+		return true
+	}
+	if i := len(mw.stack) - 1; i >= 0 {
+		mw.renderContext = mw.stack[i]
+		mw.stack = mw.stack[:i]
+	} else {
+		mw.renderContext = renderContext{}
+	}
+	return false
+}
+
+func (mw *markdownWriter) maybeFlush() error {
+	b := mw.shouldFlush()
+	if len(b) == 0 {
+		return nil
+	}
+	n, err := mw.out.Write(b)
+	mw.buf.Next(n)
+	return err
+}
+
+func (mw *markdownWriter) shouldFlush() []byte {
+	if mw.buf.Len() == 0 {
+		return nil
+	}
+	b := mw.buf.Bytes()
+	i := bytes.LastIndexByte(b, '\n')
+	if i < 0 {
+		return nil
+	}
+	return b[:i+1]
+}
+
+func (mw *markdownWriter) unsup(name string, entering bool) {
+	if entering {
+		mw.nl(1)
+		mw.indent()
+		mw.buf.WriteString("{Unsupported")
+	} else {
+		mw.buf.WriteString("{/Unsupported")
+	}
+	mw.buf.WriteString(name)
+	mw.buf.WriteByte('}')
+
+}
+
+func (mw *markdownWriter) nl(n int) {
+	b := mw.buf.Bytes()
+	if len(b) == 0 {
+		return
+	}
+
+	m := 0
+	for i := len(b) - 1; m < n && i >= 0 && b[i] == '\n'; i-- {
+		m++
+	}
+
+	for ; m < n; m++ {
+		mw.buf.WriteByte('\n')
+	}
+}
+
+func (mw *markdownWriter) indent() {
+	i := 0
+	n := mw.inLevel - 2
+	for ; i < n; i++ {
+		mw.buf.WriteByte(' ')
+	}
+	n += 2
+
+	if mw.quote != 0 {
+		mw.buf.WriteByte(mw.quote)
+		if i++; i < n {
+			mw.buf.WriteByte(' ')
+			i++
+		}
+	}
+
+	for ; i < n; i++ {
+		mw.buf.WriteByte(' ')
+	}
 }
 
 type timeLevel uint
