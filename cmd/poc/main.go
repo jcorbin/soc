@@ -16,18 +16,12 @@ import (
 )
 
 func main() {
-	if err := run(os.Stdin, os.Stdout); err != nil {
-		log.Fatal(err)
-	}
-}
+	var ui streamUIContext
+	ui.now = time.Now()
+	ui.out = os.Stdout
+	ui.buf.Grow(4096)
 
-func run(in, out *os.File) error {
-	b, err := ioutil.ReadAll(in)
-	if err != nil {
-		return err
-	}
-
-	md := blackfriday.New(blackfriday.WithExtensions(0 |
+	ui.md = blackfriday.New(blackfriday.WithExtensions(0 |
 		blackfriday.NoIntraEmphasis |
 		// blackfriday.DefinitionLists |
 		// blackfriday.Tables |
@@ -38,21 +32,63 @@ func run(in, out *os.File) error {
 		blackfriday.HeadingIDs |
 		blackfriday.BackslashLineBreak,
 	))
-	doc := md.Parse(b)
-	rollover(doc)
-	// printOutline(out, doc)
-	return WriteNodeInto(doc, out)
+
+	if err := ui.readStream(os.Stdin); err != nil {
+		log.Fatal(err)
+	}
+
+	ui.rollover(ui.now)
+	// stream.outputOutline(ui.doc)
+	if err := ui.outputMarkdown(ui.doc); err != nil {
+		log.Fatal(err)
+	}
 }
 
-func rollover(doc *blackfriday.Node) {
+type streamUIContext struct {
+	streamInput
+	stream
+	streamOutput
+}
+
+type streamInput struct {
+	md  *blackfriday.Markdown
+	now time.Time
+}
+
+type streamOutput struct {
+	bufWriter
+}
+
+type stream struct {
+	doc *blackfriday.Node
+}
+
+func (ui *streamUIContext) readStream(r io.Reader) error {
+	b, err := ioutil.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	ui.doc = ui.md.Parse(b)
+	return nil
+}
+
+func (sout *streamOutput) outputOutline(node *blackfriday.Node) error {
+	return writeOutline(&sout.bufWriter, node)
+}
+
+func (sout *streamOutput) outputMarkdown(node *blackfriday.Node) error {
+	return writeMarkdown(&sout.bufWriter, node)
+}
+
+func (stream *stream) rollover(now time.Time) {
 	var (
-		todayTime   = itemDate(time.Now().Date())
+		today       = itemDate(now.Date())
 		firstDay    *blackfriday.Node
 		todayNode   *blackfriday.Node
 		horizonNode *blackfriday.Node
 	)
 
-	walkOutline(doc, func(visit outlineVistData) blackfriday.WalkStatus {
+	walkOutline(stream.doc, func(visit outlineVistData) blackfriday.WalkStatus {
 		if !visit.Entering() {
 			return blackfriday.GoToNext
 		}
@@ -61,7 +97,7 @@ func rollover(doc *blackfriday.Node) {
 			if firstDay == nil && visit.Time().level == timeLevelDay {
 				firstDay = visit.Node(visit.Len() - 1)
 			}
-			if visit.Time().Equal(todayTime) {
+			if visit.Time().Equal(today) {
 				todayNode = visit.Node(visit.Len() - 1)
 			}
 		} else if sectionDepth(visit, "Done") == 1 {
@@ -80,7 +116,7 @@ func rollover(doc *blackfriday.Node) {
 
 		// TODO support generating a parent-relative suffix string
 		text := blackfriday.NewNode(blackfriday.Text)
-		text.Literal = []byte(todayTime.String())
+		text.Literal = []byte(today.String())
 		todayNode.AppendChild(text)
 
 		firstDay.InsertBefore(todayNode)
@@ -89,48 +125,43 @@ func rollover(doc *blackfriday.Node) {
 	horizonNode.Next.InsertBefore(firstDay)
 }
 
-func printOutline(out io.Writer, doc *blackfriday.Node) (err error) {
-	var buf bytes.Buffer
-	buf.Grow(4096)
-	walkOutline(doc, func(visit outlineVistData) blackfriday.WalkStatus {
-		if !visit.Entering() {
-			return blackfriday.GoToNext
-		}
+func writeOutline(bw *bufWriter, node *blackfriday.Node) (err error) {
+	defer bw.finalWrite(&err)
+	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
+		defer bw.walkFlush(&err, &status)
 
-		buf.WriteString(visit.Time().String())
+		if visit.Entering() {
+			bw.buf.WriteString(visit.Time().String())
 
-		// build path with pure time components elided
-		for i := 0; i < visit.Len(); i++ {
-			title := visit.Title(i)
-			if title == "" {
-				continue
+			// build path with pure time components elided
+			for i := 0; i < visit.Len(); i++ {
+				title := visit.Title(i)
+				if title == "" {
+					continue
+				}
+
+				if bw.buf.Len() > 0 {
+					bw.buf.WriteString(" ")
+				}
+
+				switch visit.Node(i).Type {
+				case blackfriday.Heading:
+					bw.buf.WriteByte('#')
+				case blackfriday.Item:
+					bw.buf.WriteByte('-')
+				default:
+					bw.buf.WriteByte('?')
+				}
+				bw.buf.WriteByte('[')
+				bw.buf.WriteString(title)
+				bw.buf.WriteByte(']')
 			}
 
-			if buf.Len() > 0 {
-				buf.WriteString(" ")
-			}
-
-			switch visit.Node(i).Type {
-			case blackfriday.Heading:
-				buf.WriteByte('#')
-			case blackfriday.Item:
-				buf.WriteByte('-')
-			default:
-				buf.WriteByte('?')
-			}
-			buf.WriteByte('[')
-			buf.WriteString(title)
-			buf.WriteByte(']')
-		}
-
-		buf.WriteByte('\n')
-		if _, err = buf.WriteTo(out); err != nil {
-			return blackfriday.Terminate
+			bw.buf.WriteByte('\n')
 		}
 
 		return blackfriday.GoToNext
 	})
-
 	return err
 }
 
@@ -388,17 +419,7 @@ func collectItemTitle(buf *bytes.Buffer, node *blackfriday.Node) {
 	})
 }
 
-func WriteNodeInto(node *blackfriday.Node, w io.Writer) error {
-	var mw markdownWriter
-	mw.out = w
-	mw.buf.Grow(4096)
-	return mw.writeNode(node)
-}
-
 type markdownWriter struct {
-	out io.Writer
-	buf bytes.Buffer
-
 	stack []renderContext
 	renderContext
 }
@@ -409,39 +430,31 @@ type renderContext struct {
 	nextItem int
 }
 
-func (mw *markdownWriter) writeNode(node *blackfriday.Node) (err error) {
-	defer func() {
-		if _, werr := mw.buf.WriteTo(mw.out); err == nil {
-			err = werr
-		}
-	}()
-
+func writeMarkdown(bw *bufWriter, node *blackfriday.Node) (err error) {
+	var mw markdownWriter
+	defer bw.finalWrite(&err)
 	node.Walk(func(n *blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
-		defer func() {
-			if err := mw.maybeFlush(); err != nil {
-				status = blackfriday.Terminate
-			}
-		}()
+		defer bw.walkFlush(&err, &status)
 
 		switch n.Type {
 		case blackfriday.Document:
 			if !entering {
-				mw.nl(1)
+				mw.nl(bw, 1)
 			}
 
 		case blackfriday.Heading:
-			mw.nl(2)
+			mw.nl(bw, 2)
 			if entering {
 				for i := 0; i < n.Level; i++ {
-					mw.buf.WriteByte('#')
+					bw.buf.WriteByte('#')
 				}
-				mw.buf.WriteByte(' ')
+				bw.buf.WriteByte(' ')
 			}
 
 		case blackfriday.List:
 			if mw.enter(entering) {
 				if n.Parent.Type != blackfriday.Item {
-					mw.nl(2)
+					mw.nl(bw, 2)
 				}
 				mw.nextItem = 1
 			}
@@ -449,17 +462,17 @@ func (mw *markdownWriter) writeNode(node *blackfriday.Node) (err error) {
 		case blackfriday.Item:
 			// TODO definition list support
 			if mw.enter(entering) {
-				mw.nl(1)
-				mw.indent()
-				start := mw.buf.Len()
+				mw.nl(bw, 1)
+				mw.indent(bw)
+				start := bw.buf.Len()
 				if n.ListFlags&blackfriday.ListTypeOrdered != 0 {
-					mw.buf.WriteString(strconv.Itoa(mw.nextItem))
-					mw.buf.WriteByte(n.Delimiter)
+					bw.buf.WriteString(strconv.Itoa(mw.nextItem))
+					bw.buf.WriteByte(n.Delimiter)
 				} else if n.BulletChar != 0 {
-					mw.buf.WriteByte(n.BulletChar)
-					mw.buf.WriteByte(' ')
+					bw.buf.WriteByte(n.BulletChar)
+					bw.buf.WriteByte(' ')
 				}
-				mw.inLevel += mw.buf.Len() - start // TODO runewidth
+				mw.inLevel += bw.buf.Len() - start // TODO runewidth
 			} else {
 				mw.nextItem++
 			}
@@ -472,43 +485,43 @@ func (mw *markdownWriter) writeNode(node *blackfriday.Node) (err error) {
 
 		case blackfriday.Paragraph:
 			if n.Parent.Type != blackfriday.Item || n != n.Parent.FirstChild {
-				mw.nl(2)
+				mw.nl(bw, 2)
 				if entering {
-					mw.indent()
+					mw.indent(bw)
 				}
 			}
 
 		case blackfriday.HorizontalRule:
-			mw.nl(2)
+			mw.nl(bw, 2)
 			if entering {
-				mw.indent()
-				mw.buf.WriteString("---")
+				mw.indent(bw)
+				bw.buf.WriteString("---")
 			}
 
 		case blackfriday.Emph:
-			mw.buf.WriteByte('*')
+			bw.buf.WriteByte('*')
 		case blackfriday.Strong:
-			mw.buf.WriteString("**")
+			bw.buf.WriteString("**")
 		case blackfriday.Del:
-			mw.buf.WriteString("~~")
+			bw.buf.WriteString("~~")
 
 		case blackfriday.Link:
 			// TODO footnote support
 			if entering {
-				mw.buf.WriteByte('[')
+				bw.buf.WriteByte('[')
 			} else {
-				mw.buf.WriteString("](")
-				mw.buf.Write(n.Destination)
-				mw.buf.WriteByte(')')
+				bw.buf.WriteString("](")
+				bw.buf.Write(n.Destination)
+				bw.buf.WriteByte(')')
 			}
 
 		case blackfriday.Image:
 			if entering {
-				mw.buf.WriteString("![")
+				bw.buf.WriteString("![")
 			} else {
-				mw.buf.WriteString("](")
-				mw.buf.Write(n.Destination)
-				mw.buf.WriteByte(')')
+				bw.buf.WriteString("](")
+				bw.buf.Write(n.Destination)
+				bw.buf.WriteByte(')')
 			}
 
 		case blackfriday.Text:
@@ -516,48 +529,55 @@ func (mw *markdownWriter) writeNode(node *blackfriday.Node) (err error) {
 				for b := n.Literal; len(b) > 0; {
 					i := bytes.IndexByte(b, '\n')
 					if i < 0 {
-						mw.buf.Write(b)
+						bw.buf.Write(b)
 						break
 					}
-					mw.buf.Write(b[:i])
-					mw.nl(1)
-					mw.indent()
+					bw.buf.Write(b[:i])
+					mw.nl(bw, 1)
+					mw.indent(bw)
 					b = b[i+1:]
 				}
 			}
 
 		case blackfriday.CodeBlock:
-			mw.nl(1)
-			mw.buf.WriteString("```")
-			mw.buf.Write(n.Info)
-			mw.nl(1)
-			mw.buf.Write(n.Literal)
-			mw.nl(1)
-			mw.buf.WriteString("```")
+			mw.nl(bw, 1)
+			bw.buf.WriteString("```")
+			bw.buf.Write(n.Info)
+			mw.nl(bw, 1)
+			bw.buf.Write(n.Literal)
+			mw.nl(bw, 1)
+			bw.buf.WriteString("```")
 
 		case blackfriday.Code:
-			mw.buf.WriteByte('`')
-			mw.buf.Write(n.Literal)
-			mw.buf.WriteByte('`')
+			bw.buf.WriteByte('`')
+			bw.buf.Write(n.Literal)
+			bw.buf.WriteByte('`')
 
 		case blackfriday.Hardbreak:
-			mw.buf.WriteByte('\\')
+			bw.buf.WriteByte('\\')
 			fallthrough
 		case blackfriday.Softbreak:
-			mw.nl(1)
+			mw.nl(bw, 1)
 
 		case blackfriday.HTMLSpan, blackfriday.HTMLBlock:
-			mw.buf.Write(n.Literal)
+			bw.buf.Write(n.Literal)
 
 		// TODO table support
 
 		default:
-			mw.unsup(n.Type.String(), entering)
+			if entering {
+				mw.nl(bw, 1)
+				mw.indent(bw)
+				bw.buf.WriteString("{Unsupported")
+			} else {
+				bw.buf.WriteString("{/Unsupported")
+			}
+			bw.buf.WriteString(n.Type.String())
+			bw.buf.WriteByte('}')
 		}
 
 		return blackfriday.GoToNext
 	})
-
 	return err
 }
 
@@ -575,43 +595,8 @@ func (mw *markdownWriter) enter(entering bool) bool {
 	return false
 }
 
-func (mw *markdownWriter) maybeFlush() error {
-	b := mw.shouldFlush()
-	if len(b) == 0 {
-		return nil
-	}
-	n, err := mw.out.Write(b)
-	mw.buf.Next(n)
-	return err
-}
-
-func (mw *markdownWriter) shouldFlush() []byte {
-	if mw.buf.Len() == 0 {
-		return nil
-	}
-	b := mw.buf.Bytes()
-	i := bytes.LastIndexByte(b, '\n')
-	if i < 0 {
-		return nil
-	}
-	return b[:i+1]
-}
-
-func (mw *markdownWriter) unsup(name string, entering bool) {
-	if entering {
-		mw.nl(1)
-		mw.indent()
-		mw.buf.WriteString("{Unsupported")
-	} else {
-		mw.buf.WriteString("{/Unsupported")
-	}
-	mw.buf.WriteString(name)
-	mw.buf.WriteByte('}')
-
-}
-
-func (mw *markdownWriter) nl(n int) {
-	b := mw.buf.Bytes()
+func (mw *markdownWriter) nl(bw *bufWriter, n int) {
+	b := bw.buf.Bytes()
 	if len(b) == 0 {
 		return
 	}
@@ -622,28 +607,67 @@ func (mw *markdownWriter) nl(n int) {
 	}
 
 	for ; m < n; m++ {
-		mw.buf.WriteByte('\n')
+		bw.buf.WriteByte('\n')
 	}
 }
 
-func (mw *markdownWriter) indent() {
+func (mw *markdownWriter) indent(bw *bufWriter) {
 	i := 0
 	n := mw.inLevel - 2
 	for ; i < n; i++ {
-		mw.buf.WriteByte(' ')
+		bw.buf.WriteByte(' ')
 	}
 	n += 2
 
 	if mw.quote != 0 {
-		mw.buf.WriteByte(mw.quote)
+		bw.buf.WriteByte(mw.quote)
 		if i++; i < n {
-			mw.buf.WriteByte(' ')
+			bw.buf.WriteByte(' ')
 			i++
 		}
 	}
 
 	for ; i < n; i++ {
-		mw.buf.WriteByte(' ')
+		bw.buf.WriteByte(' ')
+	}
+}
+
+type bufWriter struct {
+	out io.Writer
+	buf bytes.Buffer
+}
+
+func (bw *bufWriter) maybeFlush() error {
+	b := bw.shouldFlush()
+	if len(b) == 0 {
+		return nil
+	}
+	n, err := bw.out.Write(b)
+	bw.buf.Next(n)
+	return err
+}
+
+func (bw *bufWriter) shouldFlush() []byte {
+	if bw.buf.Len() == 0 {
+		return nil
+	}
+	b := bw.buf.Bytes()
+	i := bytes.LastIndexByte(b, '\n')
+	if i < 0 {
+		return nil
+	}
+	return b[:i+1]
+}
+
+func (bw *bufWriter) finalWrite(err *error) {
+	if _, werr := bw.buf.WriteTo(bw.out); *err == nil {
+		*err = werr
+	}
+}
+
+func (bw *bufWriter) walkFlush(err *error, status *blackfriday.WalkStatus) {
+	if *err = bw.maybeFlush(); *err != nil {
+		*status = blackfriday.Terminate
 	}
 }
 
