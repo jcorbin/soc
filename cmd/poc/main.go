@@ -72,12 +72,26 @@ func (ui *streamUIContext) readStream(r io.Reader) error {
 	return nil
 }
 
-func (sout *streamOutput) outputOutline(node *blackfriday.Node) error {
-	return writeOutline(&sout.bufWriter, node)
+func (sout *streamOutput) outputOutline(node *blackfriday.Node) (err error) {
+	defer sout.bufWriter.finalWrite(&err)
+	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
+		defer sout.bufWriter.walkFlush(&err, &status)
+		if visit.Entering() {
+			writeOutlineLine(&sout.bufWriter.buf, visit)
+		}
+		return blackfriday.GoToNext
+	})
+	return
 }
 
-func (sout *streamOutput) outputMarkdown(node *blackfriday.Node) error {
-	return writeMarkdown(&sout.bufWriter, node)
+func (sout *streamOutput) outputMarkdown(node *blackfriday.Node) (err error) {
+	var mw markdownWriter
+	defer sout.bufWriter.finalWrite(&err)
+	node.Walk(func(n *blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
+		defer sout.bufWriter.walkFlush(&err, &status)
+		return mw.visitNode(&sout.bufWriter.buf, n, entering)
+	})
+	return
 }
 
 func (stream *stream) rollover(now time.Time) {
@@ -125,44 +139,34 @@ func (stream *stream) rollover(now time.Time) {
 	horizonNode.Next.InsertBefore(firstDay)
 }
 
-func writeOutline(bw *bufWriter, node *blackfriday.Node) (err error) {
-	defer bw.finalWrite(&err)
-	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
-		defer bw.walkFlush(&err, &status)
+func writeOutlineLine(buf *bytes.Buffer, visit outlineVistData) {
+	buf.WriteString(visit.Time().String())
 
-		if visit.Entering() {
-			bw.buf.WriteString(visit.Time().String())
-
-			// build path with pure time components elided
-			for i := 0; i < visit.Len(); i++ {
-				title := visit.Title(i)
-				if title == "" {
-					continue
-				}
-
-				if bw.buf.Len() > 0 {
-					bw.buf.WriteString(" ")
-				}
-
-				switch visit.Node(i).Type {
-				case blackfriday.Heading:
-					bw.buf.WriteByte('#')
-				case blackfriday.Item:
-					bw.buf.WriteByte('-')
-				default:
-					bw.buf.WriteByte('?')
-				}
-				bw.buf.WriteByte('[')
-				bw.buf.WriteString(title)
-				bw.buf.WriteByte(']')
-			}
-
-			bw.buf.WriteByte('\n')
+	// build path with pure time components elided
+	for i := 0; i < visit.Len(); i++ {
+		title := visit.Title(i)
+		if title == "" {
+			continue
 		}
 
-		return blackfriday.GoToNext
-	})
-	return err
+		if buf.Len() > 0 {
+			buf.WriteString(" ")
+		}
+
+		switch visit.Node(i).Type {
+		case blackfriday.Heading:
+			buf.WriteByte('#')
+		case blackfriday.Item:
+			buf.WriteByte('-')
+		default:
+			buf.WriteByte('?')
+		}
+		buf.WriteByte('[')
+		buf.WriteString(title)
+		buf.WriteByte(']')
+	}
+
+	buf.WriteByte('\n')
 }
 
 type outlineVistData interface {
@@ -430,155 +434,147 @@ type renderContext struct {
 	nextItem int
 }
 
-func writeMarkdown(bw *bufWriter, node *blackfriday.Node) (err error) {
-	var mw markdownWriter
-	defer bw.finalWrite(&err)
-	node.Walk(func(n *blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
-		defer bw.walkFlush(&err, &status)
-
-		switch n.Type {
-		case blackfriday.Document:
-			if !entering {
-				mw.nl(bw, 1)
-			}
-
-		case blackfriday.Heading:
-			mw.nl(bw, 2)
-			if entering {
-				for i := 0; i < n.Level; i++ {
-					bw.buf.WriteByte('#')
-				}
-				bw.buf.WriteByte(' ')
-			}
-
-		case blackfriday.List:
-			if mw.enter(entering) {
-				if n.Parent.Type != blackfriday.Item {
-					mw.nl(bw, 2)
-				}
-				mw.nextItem = 1
-			}
-
-		case blackfriday.Item:
-			// TODO definition list support
-			if mw.enter(entering) {
-				mw.nl(bw, 1)
-				mw.indent(bw)
-				start := bw.buf.Len()
-				if n.ListFlags&blackfriday.ListTypeOrdered != 0 {
-					bw.buf.WriteString(strconv.Itoa(mw.nextItem))
-					bw.buf.WriteByte(n.Delimiter)
-				} else if n.BulletChar != 0 {
-					bw.buf.WriteByte(n.BulletChar)
-					bw.buf.WriteByte(' ')
-				}
-				mw.inLevel += bw.buf.Len() - start // TODO runewidth
-			} else {
-				mw.nextItem++
-			}
-
-		case blackfriday.BlockQuote:
-			if mw.enter(entering) {
-				mw.inLevel += 2
-				mw.quote = '>'
-			}
-
-		case blackfriday.Paragraph:
-			if n.Parent.Type != blackfriday.Item || n != n.Parent.FirstChild {
-				mw.nl(bw, 2)
-				if entering {
-					mw.indent(bw)
-				}
-			}
-
-		case blackfriday.HorizontalRule:
-			mw.nl(bw, 2)
-			if entering {
-				mw.indent(bw)
-				bw.buf.WriteString("---")
-			}
-
-		case blackfriday.Emph:
-			bw.buf.WriteByte('*')
-		case blackfriday.Strong:
-			bw.buf.WriteString("**")
-		case blackfriday.Del:
-			bw.buf.WriteString("~~")
-
-		case blackfriday.Link:
-			// TODO footnote support
-			if entering {
-				bw.buf.WriteByte('[')
-			} else {
-				bw.buf.WriteString("](")
-				bw.buf.Write(n.Destination)
-				bw.buf.WriteByte(')')
-			}
-
-		case blackfriday.Image:
-			if entering {
-				bw.buf.WriteString("![")
-			} else {
-				bw.buf.WriteString("](")
-				bw.buf.Write(n.Destination)
-				bw.buf.WriteByte(')')
-			}
-
-		case blackfriday.Text:
-			if entering {
-				for b := n.Literal; len(b) > 0; {
-					i := bytes.IndexByte(b, '\n')
-					if i < 0 {
-						bw.buf.Write(b)
-						break
-					}
-					bw.buf.Write(b[:i])
-					mw.nl(bw, 1)
-					mw.indent(bw)
-					b = b[i+1:]
-				}
-			}
-
-		case blackfriday.CodeBlock:
-			mw.nl(bw, 1)
-			bw.buf.WriteString("```")
-			bw.buf.Write(n.Info)
-			mw.nl(bw, 1)
-			bw.buf.Write(n.Literal)
-			mw.nl(bw, 1)
-			bw.buf.WriteString("```")
-
-		case blackfriday.Code:
-			bw.buf.WriteByte('`')
-			bw.buf.Write(n.Literal)
-			bw.buf.WriteByte('`')
-
-		case blackfriday.Hardbreak:
-			bw.buf.WriteByte('\\')
-			fallthrough
-		case blackfriday.Softbreak:
-			mw.nl(bw, 1)
-
-		case blackfriday.HTMLSpan, blackfriday.HTMLBlock:
-			bw.buf.Write(n.Literal)
-
-		// TODO table support
-
-		default:
-			if entering {
-				mw.nl(bw, 1)
-				mw.indent(bw)
-				bw.buf.WriteString("{Unsupported")
-			} else {
-				bw.buf.WriteString("{/Unsupported")
-			}
-			bw.buf.WriteString(n.Type.String())
-			bw.buf.WriteByte('}')
+func (mw *markdownWriter) visitNode(buf *bytes.Buffer, node *blackfriday.Node, entering bool) blackfriday.WalkStatus {
+	switch node.Type {
+	case blackfriday.Document:
+		if !entering {
+			mw.nl(buf, 1)
 		}
 
-		return blackfriday.GoToNext
-	})
-	return err
+	case blackfriday.Heading:
+		mw.nl(buf, 2)
+		if entering {
+			for i := 0; i < node.Level; i++ {
+				buf.WriteByte('#')
+			}
+			buf.WriteByte(' ')
+		}
+
+	case blackfriday.List:
+		if mw.enter(entering) {
+			if node.Parent.Type != blackfriday.Item {
+				mw.nl(buf, 2)
+			}
+			mw.nextItem = 1
+		}
+
+	case blackfriday.Item:
+		// TODO definition list support
+		if mw.enter(entering) {
+			mw.nl(buf, 1)
+			mw.indent(buf)
+			start := buf.Len()
+			if node.ListFlags&blackfriday.ListTypeOrdered != 0 {
+				buf.WriteString(strconv.Itoa(mw.nextItem))
+				buf.WriteByte(node.Delimiter)
+			} else if node.BulletChar != 0 {
+				buf.WriteByte(node.BulletChar)
+				buf.WriteByte(' ')
+			}
+			mw.inLevel += buf.Len() - start // TODO runewidth
+		} else {
+			mw.nextItem++
+		}
+
+	case blackfriday.BlockQuote:
+		if mw.enter(entering) {
+			mw.inLevel += 2
+			mw.quote = '>'
+		}
+
+	case blackfriday.Paragraph:
+		if node.Parent.Type != blackfriday.Item || node != node.Parent.FirstChild {
+			mw.nl(buf, 2)
+			if entering {
+				mw.indent(buf)
+			}
+		}
+
+	case blackfriday.HorizontalRule:
+		mw.nl(buf, 2)
+		if entering {
+			mw.indent(buf)
+			buf.WriteString("---")
+		}
+
+	case blackfriday.Emph:
+		buf.WriteByte('*')
+	case blackfriday.Strong:
+		buf.WriteString("**")
+	case blackfriday.Del:
+		buf.WriteString("~~")
+
+	case blackfriday.Link:
+		// TODO footnote support
+		if entering {
+			buf.WriteByte('[')
+		} else {
+			buf.WriteString("](")
+			buf.Write(node.Destination)
+			buf.WriteByte(')')
+		}
+
+	case blackfriday.Image:
+		if entering {
+			buf.WriteString("![")
+		} else {
+			buf.WriteString("](")
+			buf.Write(node.Destination)
+			buf.WriteByte(')')
+		}
+
+	case blackfriday.Text:
+		if entering {
+			for b := node.Literal; len(b) > 0; {
+				i := bytes.IndexByte(b, '\n')
+				if i < 0 {
+					buf.Write(b)
+					break
+				}
+				buf.Write(b[:i])
+				mw.nl(buf, 1)
+				mw.indent(buf)
+				b = b[i+1:]
+			}
+		}
+
+	case blackfriday.CodeBlock:
+		mw.nl(buf, 1)
+		buf.WriteString("```")
+		buf.Write(node.Info)
+		mw.nl(buf, 1)
+		buf.Write(node.Literal)
+		mw.nl(buf, 1)
+		buf.WriteString("```")
+
+	case blackfriday.Code:
+		buf.WriteByte('`')
+		buf.Write(node.Literal)
+		buf.WriteByte('`')
+
+	case blackfriday.Hardbreak:
+		buf.WriteByte('\\')
+		fallthrough
+	case blackfriday.Softbreak:
+		mw.nl(buf, 1)
+
+	case blackfriday.HTMLSpan, blackfriday.HTMLBlock:
+		buf.Write(node.Literal)
+
+	// TODO table support
+
+	default:
+		if entering {
+			mw.nl(buf, 1)
+			mw.indent(buf)
+			buf.WriteString("{Unsupported")
+		} else {
+			buf.WriteString("{/Unsupported")
+		}
+		buf.WriteString(node.Type.String())
+		buf.WriteByte('}')
+	}
+	return blackfriday.GoToNext
 }
 
 func (mw *markdownWriter) enter(entering bool) bool {
@@ -595,8 +591,8 @@ func (mw *markdownWriter) enter(entering bool) bool {
 	return false
 }
 
-func (mw *markdownWriter) nl(bw *bufWriter, n int) {
-	b := bw.buf.Bytes()
+func (mw *markdownWriter) nl(buf *bytes.Buffer, n int) {
+	b := buf.Bytes()
 	if len(b) == 0 {
 		return
 	}
@@ -607,28 +603,28 @@ func (mw *markdownWriter) nl(bw *bufWriter, n int) {
 	}
 
 	for ; m < n; m++ {
-		bw.buf.WriteByte('\n')
+		buf.WriteByte('\n')
 	}
 }
 
-func (mw *markdownWriter) indent(bw *bufWriter) {
+func (mw *markdownWriter) indent(buf *bytes.Buffer) {
 	i := 0
 	n := mw.inLevel - 2
 	for ; i < n; i++ {
-		bw.buf.WriteByte(' ')
+		buf.WriteByte(' ')
 	}
 	n += 2
 
 	if mw.quote != 0 {
-		bw.buf.WriteByte(mw.quote)
+		buf.WriteByte(mw.quote)
 		if i++; i < n {
-			bw.buf.WriteByte(' ')
+			buf.WriteByte(' ')
 			i++
 		}
 	}
 
 	for ; i < n; i++ {
-		bw.buf.WriteByte(' ')
+		buf.WriteByte(' ')
 	}
 }
 
