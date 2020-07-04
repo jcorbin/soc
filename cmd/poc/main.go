@@ -17,10 +17,10 @@ import (
 	"syscall"
 	"time"
 	"unicode"
-	"unicode/utf8"
 
 	"github.com/google/renameio"
 	"github.com/jcorbin/soc/internal/isotime"
+	"github.com/jcorbin/soc/internal/socutil"
 	"github.com/russross/blackfriday"
 )
 
@@ -152,7 +152,7 @@ type userResponse struct {
 func (ui *userInterface) serveArgs(now time.Time, args []string, respTo io.Writer) error {
 	var req userRequest
 	req.now = now
-	req.body = bytes.NewReader(quotedArgs(args))
+	req.body = bytes.NewReader(socutil.QuotedArgs(args))
 	return ui.serve(&req, respTo)
 }
 
@@ -226,7 +226,7 @@ func (req *userRequest) ScanArg() bool {
 		}
 		req.cmd.Reset(req.bodyScanner.Bytes())
 		req.cmdScanner = bufio.NewScanner(&req.cmd)
-		req.cmdScanner.Split(scanArgs)
+		req.cmdScanner.Split(socutil.ScanArgs)
 	}
 
 	if !req.cmdScanner.Scan() {
@@ -1070,68 +1070,6 @@ func (bw *bufWriter) walkFlush(status *blackfriday.WalkStatus) {
 	if bw.maybeFlush() != nil {
 		*status = blackfriday.Terminate
 	}
-}
-
-func quotedArgs(args []string) []byte {
-	n := len(args)
-	for _, arg := range args {
-		n += 2 * len(arg)
-	}
-	b := make([]byte, 0, n)
-	for _, arg := range args {
-		if len(b) > 0 {
-			b = append(b, ' ')
-		}
-		if strings.ContainsRune(arg, ' ') {
-			b = strconv.AppendQuote(b, arg)
-		} else {
-			b = append(b, arg...)
-		}
-	}
-	return b
-}
-
-func scanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	// Skip leading spaces.
-	start := 0
-	var r rune
-	for width := 0; start < len(data); start += width {
-		r, width = utf8.DecodeRune(data[start:])
-		if !unicode.IsSpace(r) {
-			break
-		}
-	}
-
-	if r == '"' || r == '\'' {
-		// Scan until end quote, skipping escaped quotoes.
-		q := r
-		esc := false
-		for width, i := 0, start+1; i < len(data); i += width {
-			r, width = utf8.DecodeRune(data[i:])
-			if r == '\\' {
-				esc = true
-			} else if !esc && r == q {
-				return i + width, data[start:i], nil
-			} else {
-				esc = false
-			}
-		}
-	} else {
-		// Scan until space.
-		for width, i := 0, start; i < len(data); i += width {
-			r, width = utf8.DecodeRune(data[i:])
-			if unicode.IsSpace(r) {
-				return i + width, data[start:i], nil
-			}
-		}
-	}
-
-	// If we're at EOF, we have a final, non-empty, non-terminated arg. Return it.
-	if atEOF && len(data) > start {
-		return len(data), data[start:], nil
-	}
-	// Request more data.
-	return start, nil, nil
 }
 
 func infoID(info os.FileInfo) string {
