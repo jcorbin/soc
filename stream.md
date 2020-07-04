@@ -46,7 +46,7 @@ bla bla
 [that]: such.com
 [cats]: cats.gif
 
-# 2020-07-01
+# 2020-07-03
 
 ## TODO
 
@@ -64,6 +64,11 @@ bla bla
 ## WIP
 
 ## Done
+
+- further refactored poc command structure to be a req/res handling scheme
+- initial cut at file storage
+
+# 2020-07-01
 
 - refactor buffer write walk helpers
 
