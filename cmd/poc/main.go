@@ -2,7 +2,11 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"errors"
+	"flag"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -11,51 +15,79 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/russross/blackfriday"
 )
 
 func main() {
-	var ui streamUIContext
-	ui.now = time.Now()
-	ui.out = os.Stdout
-	ui.buf.Grow(4096)
+	var (
+		now    = time.Now()
+		respTo = os.Stdout
+		ui     userInterface
 
-	ui.md = blackfriday.New(blackfriday.WithExtensions(0 |
-		blackfriday.NoIntraEmphasis |
-		// blackfriday.DefinitionLists |
-		// blackfriday.Tables |
-		blackfriday.FencedCode |
-		blackfriday.Autolink |
-		blackfriday.Strikethrough |
-		blackfriday.SpaceHeadings |
-		blackfriday.HeadingIDs |
-		blackfriday.BackslashLineBreak,
-	))
+		mdExtensisons = 0 |
+			blackfriday.NoIntraEmphasis |
+			// blackfriday.DefinitionLists |
+			// blackfriday.Tables |
+			blackfriday.FencedCode |
+			blackfriday.Autolink |
+			blackfriday.Strikethrough |
+			blackfriday.SpaceHeadings |
+			blackfriday.HeadingIDs |
+			blackfriday.BackslashLineBreak
+	)
+	ui.handle = handleUserRequest
+	ui.store.from = os.Stdin
+	ui.store.to = os.Stdout
 
-	if err := ui.readStream(os.Stdin); err != nil {
-		log.Fatal(err)
+	flag.Parse()
+	ui.store.md = blackfriday.New(blackfriday.WithExtensions(mdExtensisons))
+
+	// TODO detect stream file, prefer if stdin is tty; maybe only do stdio proc by flag
+	if ui.store.to == os.Stdout && respTo == os.Stdout {
+		respTo = os.Stderr // TODO in-situ response section/buffewr
 	}
 
-	ui.rollover(ui.now)
-	// stream.outputOutline(ui.doc)
-	if err := ui.outputMarkdown(ui.doc); err != nil {
+	if err := ui.serveArgs(now, flag.Args(), respTo); err != nil {
 		log.Fatal(err)
 	}
 }
 
-type streamUIContext struct {
-	streamInput
+func handleUserRequest(st Stream, req *userRequest, resp *userResponse) error {
+	if req.ScanArg() && req.Arg() == "outline" {
+		writeOutlineInto(st.Root(), &resp.bufWriter)
+	}
+	return nil
+}
+
+type Stream interface {
+	// TODO in the future this will lower to:
+	//   In() io.Readder and
+	//   Out() io.Writer
+	// expecting the handler to implement a transfrom scan
+	Root() *blackfriday.Node
+	SetRoot(root *blackfriday.Node)
+
+	Commit(message string, args ...interface{}) error
+}
+
+type userHandler func(st Stream, req *userRequest, resp *userResponse) error
+
+type userInterface struct {
+	store  streamStore
+	handle userHandler
+}
+
+type streamStore struct {
+	md *blackfriday.Markdown
 	stream
-	streamOutput
-}
+	dirty bool
 
-type streamInput struct {
-	md  *blackfriday.Markdown
-	now time.Time
-}
-
-type streamOutput struct {
+	// TODO support file path load and atomic write
+	// TODO support change tracking
+	// TODO support metadata checking
+	from io.Reader
 	bufWriter
 }
 
@@ -63,46 +95,294 @@ type stream struct {
 	doc *blackfriday.Node
 }
 
-func (ui *streamUIContext) readStream(r io.Reader) error {
-	b, err := ioutil.ReadAll(r)
+type userRequest struct {
+	now time.Time
+
+	body        io.Reader
+	bodyScanner *bufio.Scanner
+
+	cmd        bytes.Reader
+	cmdScanner *bufio.Scanner
+
+	err error
+}
+
+type userResponse struct {
+	bufWriter
+}
+
+func (ui *userInterface) serveArgs(now time.Time, args []string, respTo io.Writer) error {
+	var req userRequest
+	req.now = now
+	req.body = bytes.NewReader(quotedArgs(args))
+	return ui.serve(&req, respTo)
+}
+
+func (ui *userInterface) serve(req *userRequest, respTo io.Writer) error {
+	if respTo == ui.store.to {
+		return errors.New("in-situ response not supporteed") // TODO buffer then store
+	}
+	// TODO eliminate transactional load/save once we have atomic storage (rather than invalidated logging)
+	return ui.store.with(func(st Stream) error {
+		return req.serve(st, ui.handle, respTo)
+	})
+}
+
+func (req *userRequest) serve(st Stream, handle userHandler, respTo io.Writer) (rerr error) {
+	if err := req.rollover(st); err != nil {
+		return err
+	}
+
+	defer func() {
+		if rerr == nil {
+			rerr = req.err
+		}
+	}()
+
+	var resp userResponse
+	resp.to = respTo
+	defer func() {
+		if ferr := resp.flush(); rerr == nil {
+			rerr = ferr
+		}
+	}()
+
+	return handle(st, req, &resp)
+}
+
+func (req *userRequest) Now() time.Time {
+	return req.now
+}
+
+func (req *userRequest) ScanCommand() bool {
+	if req.err != nil {
+		return false
+	}
+
+	if req.bodyScanner == nil {
+		if req.bodyScanner == nil && req.body != nil {
+			// TODO use markdown scanning once we have it
+			req.bodyScanner = bufio.NewScanner(req.body)
+			req.bodyScanner.Split(bufio.ScanLines)
+		}
+	}
+	req.cmd.Reset(nil)
+	req.cmdScanner = nil
+
+	if !req.bodyScanner.Scan() {
+		req.err = req.bodyScanner.Err()
+		return false
+	}
+
+	return true
+}
+
+func (req *userRequest) ScanArg() bool {
+	if req.err != nil {
+		return false
+	}
+
+	if req.cmdScanner == nil {
+		if req.bodyScanner == nil && !req.ScanCommand() {
+			return false
+		}
+		req.cmd.Reset(req.bodyScanner.Bytes())
+		req.cmdScanner = bufio.NewScanner(&req.cmd)
+		req.cmdScanner.Split(scanArgs)
+	}
+
+	if !req.cmdScanner.Scan() {
+		req.err = req.cmdScanner.Err()
+		return false
+	}
+
+	return true
+}
+
+func (req *userRequest) Command() string {
+	if req.bodyScanner == nil {
+		return ""
+	}
+	return req.bodyScanner.Text()
+}
+
+func (req *userRequest) Arg() string {
+	if req.cmdScanner == nil {
+		return ""
+	}
+	arg := req.cmdScanner.Text()
+	if len(arg) > 2 && (arg[0] == '"' || arg[0] == '\'') {
+		var sb strings.Builder
+		sb.Grow(len(arg))
+		for len(arg) > 0 {
+			r, _, tail, err := strconv.UnquoteChar(arg, '"')
+			if err != nil {
+				sb.WriteString(arg)
+				break
+			}
+			sb.WriteRune(r)
+			arg = tail
+		}
+		arg = sb.String()
+	}
+	return arg
+}
+
+func (req *userRequest) Err() error {
+	return req.err
+}
+
+func (st *streamStore) Root() *blackfriday.Node        { return st.doc }
+func (st *streamStore) SetRoot(root *blackfriday.Node) { st.doc = root }
+
+func (st *streamStore) with(under func(Stream) error) (err error) {
+	if st.doc == nil {
+		if err = st.load(); err != nil {
+			return
+		}
+	}
+	defer func() {
+		if st.dirty {
+			if serr := st.save(); err == nil {
+				err = serr
+			}
+		}
+	}()
+	return under(st)
+}
+
+func (st *streamStore) load() error {
+	b, err := ioutil.ReadAll(st.from)
 	if err != nil {
 		return err
 	}
-	ui.doc = ui.md.Parse(b)
+	st.dirty = false
+	st.doc = st.md.Parse(b)
 	return nil
 }
 
-func (sout *streamOutput) outputOutline(node *blackfriday.Node) (err error) {
-	defer sout.bufWriter.finalWrite(&err)
-	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
-		defer sout.bufWriter.walkFlush(&err, &status)
-		if visit.Entering() {
-			writeOutlineLine(&sout.bufWriter.buf, visit)
+func (st *streamStore) save() (err error) {
+	defer func() {
+		if err == nil {
+			st.dirty = false
+		}
+	}()
+	writeMarkdownInto(st.doc, &st.bufWriter)
+	return st.flush()
+}
+
+func (st *streamStore) logf(message string, args ...interface{}) {
+	if len(args) > 0 {
+		message = fmt.Sprintf(message, args...)
+	}
+
+	var (
+		logNode  *blackfriday.Node
+		doneNode *blackfriday.Node
+		firstDay *blackfriday.Node
+	)
+	walkOutline(st.Root(), func(visit outlineVistData) blackfriday.WalkStatus {
+		if !visit.Entering() {
+			return blackfriday.GoToNext
+		}
+		if sectionDepth(visit, "Log") == 1 {
+			logNode = visit.Node(visit.Len() - 1)
+			return blackfriday.Terminate
+		}
+		if isTemporal(visit) {
+			if firstDay == nil && visit.Time().level == timeLevelDay {
+				firstDay = visit.Node(visit.Len() - 1)
+			}
+		} else if sectionDepth(visit, "Done") == 1 {
+			doneNode = visit.Node(visit.Len() - 1)
 		}
 		return blackfriday.GoToNext
 	})
-	return
+
+	if logNode == nil {
+		logNode = blackfriday.NewNode(blackfriday.Heading)
+		logNode.Level = 1
+		text := blackfriday.NewNode(blackfriday.Text)
+		text.Literal = []byte("SoC Log")
+		logNode.AppendChild(text)
+		if doneNode != nil {
+			logNode.Level = doneNode.Level
+			doneNode.InsertBefore(logNode)
+		} else if firstDay != nil {
+			logNode.Level = firstDay.Level + 1
+			if firstDay.Next != nil {
+				firstDay.Next.InsertBefore(logNode)
+			} else {
+				firstDay.Parent.AppendChild(logNode)
+			}
+		} else if st.doc.FirstChild != nil {
+			st.doc.FirstChild.InsertBefore(logNode)
+		} else {
+			st.doc.AppendChild(logNode)
+		}
+	}
+
+	var list *blackfriday.Node
+	for n := logNode.Next; n != nil; n = n.Next {
+		if n.Type == blackfriday.List {
+			list = n
+			break
+		} else if n.Type == blackfriday.Heading {
+			break
+		}
+	}
+	if list == nil {
+		list = blackfriday.NewNode(blackfriday.List)
+		if logNode.Next != nil {
+			logNode.Next.InsertBefore(list)
+		} else {
+			logNode.Parent.AppendChild(list)
+		}
+	}
+
+	item := blackfriday.NewNode(blackfriday.Item)
+	item.BulletChar = '+'
+	text := blackfriday.NewNode(blackfriday.Text)
+	text.Literal = []byte(message)
+	item.AppendChild(text)
+	list.AppendChild(item)
 }
 
-func (sout *streamOutput) outputMarkdown(node *blackfriday.Node) (err error) {
+func (st *streamStore) Commit(message string, args ...interface{}) error {
+	// TODO implement incremental save once we have file path
+	// TODO integrate with git once we have it
+	st.dirty = true
+	st.logf(message, args...)
+	return nil
+}
+
+func writeMarkdownInto(node *blackfriday.Node, bw *bufWriter) {
 	var mw markdownWriter
-	defer sout.bufWriter.finalWrite(&err)
 	node.Walk(func(n *blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
-		defer sout.bufWriter.walkFlush(&err, &status)
-		return mw.visitNode(&sout.bufWriter.buf, n, entering)
+		defer bw.walkFlush(&status)
+		return mw.visitNode(&bw.buf, n, entering)
 	})
-	return
 }
 
-func (stream *stream) rollover(now time.Time) {
+func writeOutlineInto(node *blackfriday.Node, bw *bufWriter) {
+	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
+		defer bw.walkFlush(&status)
+		if visit.Entering() {
+			writeOutlineLine(&bw.buf, visit)
+		}
+		return blackfriday.GoToNext
+	})
+}
+
+func (req *userRequest) rollover(st Stream) error {
 	var (
-		today       = itemDate(now.Date())
+		today       = itemDate(req.now.Date())
 		firstDay    *blackfriday.Node
 		todayNode   *blackfriday.Node
 		horizonNode *blackfriday.Node
 	)
 
-	walkOutline(stream.doc, func(visit outlineVistData) blackfriday.WalkStatus {
+	walkOutline(st.Root(), func(visit outlineVistData) blackfriday.WalkStatus {
 		if !visit.Entering() {
 			return blackfriday.GoToNext
 		}
@@ -133,10 +413,21 @@ func (stream *stream) rollover(now time.Time) {
 		text.Literal = []byte(today.String())
 		todayNode.AppendChild(text)
 
+		// TODO separate horizen rollover from today ensure; support rolling over into prior section
+
 		firstDay.InsertBefore(todayNode)
+		horizonNode.Next.InsertBefore(firstDay)
+
+		// TODO promote/pull-down from upcoming
+
+		if err := st.Commit("rollover"); err != nil {
+			return err
+		}
 	}
-	firstDay.Unlink()
-	horizonNode.Next.InsertBefore(firstDay)
+
+	// TODO correct evacuation with pre-existing today section
+
+	return nil
 }
 
 func writeOutlineLine(buf *bytes.Buffer, visit outlineVistData) {
@@ -629,16 +920,20 @@ func (mw *markdownWriter) indent(buf *bytes.Buffer) {
 }
 
 type bufWriter struct {
-	out io.Writer
+	to  io.Writer
 	buf bytes.Buffer
+	err error
 }
 
 func (bw *bufWriter) maybeFlush() error {
+	if bw.err != nil {
+		return bw.err
+	}
 	b := bw.shouldFlush()
 	if len(b) == 0 {
 		return nil
 	}
-	n, err := bw.out.Write(b)
+	n, err := bw.to.Write(b)
 	bw.buf.Next(n)
 	return err
 }
@@ -655,14 +950,15 @@ func (bw *bufWriter) shouldFlush() []byte {
 	return b[:i+1]
 }
 
-func (bw *bufWriter) finalWrite(err *error) {
-	if _, werr := bw.buf.WriteTo(bw.out); *err == nil {
-		*err = werr
+func (bw *bufWriter) flush() error {
+	if _, werr := bw.buf.WriteTo(bw.to); bw.err == nil {
+		bw.err = werr
 	}
+	return bw.err
 }
 
-func (bw *bufWriter) walkFlush(err *error, status *blackfriday.WalkStatus) {
-	if *err = bw.maybeFlush(); *err != nil {
+func (bw *bufWriter) walkFlush(status *blackfriday.WalkStatus) {
+	if bw.maybeFlush() != nil {
 		*status = blackfriday.Terminate
 	}
 }
@@ -842,4 +1138,66 @@ func (t *itemTime) Parse(s string) (rest string) {
 		rest = next
 	}
 	return rest
+}
+
+func quotedArgs(args []string) []byte {
+	n := len(args)
+	for _, arg := range args {
+		n += 2 * len(arg)
+	}
+	b := make([]byte, 0, n)
+	for _, arg := range args {
+		if len(b) > 0 {
+			b = append(b, ' ')
+		}
+		if strings.ContainsRune(arg, ' ') {
+			b = strconv.AppendQuote(b, arg)
+		} else {
+			b = append(b, arg...)
+		}
+	}
+	return b
+}
+
+func scanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	// Skip leading spaces.
+	start := 0
+	var r rune
+	for width := 0; start < len(data); start += width {
+		r, width = utf8.DecodeRune(data[start:])
+		if !unicode.IsSpace(r) {
+			break
+		}
+	}
+
+	if r == '"' || r == '\'' {
+		// Scan until end quote, skipping escaped quotoes.
+		q := r
+		esc := false
+		for width, i := 0, start+1; i < len(data); i += width {
+			r, width = utf8.DecodeRune(data[i:])
+			if r == '\\' {
+				esc = true
+			} else if !esc && r == q {
+				return i + width, data[start:i], nil
+			} else {
+				esc = false
+			}
+		}
+	} else {
+		// Scan until space.
+		for width, i := 0, start; i < len(data); i += width {
+			r, width = utf8.DecodeRune(data[i:])
+			if unicode.IsSpace(r) {
+				return i + width, data[start:i], nil
+			}
+		}
+	}
+
+	// If we're at EOF, we have a final, non-empty, non-terminated arg. Return it.
+	if atEOF && len(data) > start {
+		return len(data), data[start:], nil
+	}
+	// Request more data.
+	return start, nil, nil
 }
