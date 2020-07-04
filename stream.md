@@ -46,7 +46,7 @@ bla bla
 [that]: such.com
 [cats]: cats.gif
 
-# 2020-06-28
+# 2020-07-01
 
 ## TODO
 
@@ -64,6 +64,14 @@ bla bla
 ## WIP
 
 ## Done
+
+- refactor buffer write walk helpers
+
+# 2020-06-30
+
+- started factoring out poc ui structures
+
+# 2020-06-28
 
 - wrote a poc markdown renderer for blackfriday v2
   - upstream [doesn't yet support](https://github.com/russross/blackfriday/issues/670)
