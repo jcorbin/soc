@@ -301,7 +301,7 @@ func (st *streamStore) load() (rerr error) {
 		if err != nil {
 			return err
 		}
-		if st.fileid == infoID(info) {
+		if st.fileid == infoID(info) && !st.dirty {
 			return nil
 		}
 
@@ -322,7 +322,6 @@ func (st *streamStore) load() (rerr error) {
 		defer func() {
 			if info, rerr = file.Stat(); rerr == nil {
 				st.fileid = infoID(info)
-				st.logf("loaded fileid:%q", st.fileid)
 			}
 		}()
 	}
