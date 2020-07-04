@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/renameio"
+	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/russross/blackfriday"
 )
 
@@ -396,7 +397,7 @@ func (st *streamStore) logf(message string, args ...interface{}) {
 			return blackfriday.Terminate
 		}
 		if isTemporal(visit) {
-			if firstDay == nil && visit.Time().level == timeLevelDay {
+			if firstDay == nil && visit.Time().Grain() == isotime.TimeGrainDay {
 				firstDay = visit.Node(visit.Len() - 1)
 			}
 		} else if sectionDepth(visit, "Done") == 1 {
@@ -482,7 +483,9 @@ func writeOutlineInto(node *blackfriday.Node, bw *bufWriter) {
 
 func (req *userRequest) rollover(st Stream) error {
 	var (
-		today       = itemDate(req.now.Date())
+		year, month, day = req.now.Date()
+		today            = isotime.Time(nil, year, month, day, 0, 0, 0)
+
 		firstDay    *blackfriday.Node
 		todayNode   *blackfriday.Node
 		horizonNode *blackfriday.Node
@@ -494,7 +497,7 @@ func (req *userRequest) rollover(st Stream) error {
 		}
 
 		if isTemporal(visit) {
-			if firstDay == nil && visit.Time().level == timeLevelDay {
+			if firstDay == nil && visit.Time().Grain() == isotime.TimeGrainDay {
 				firstDay = visit.Node(visit.Len() - 1)
 			}
 			if visit.Time().Equal(today) {
@@ -568,7 +571,7 @@ func writeOutlineLine(buf *bytes.Buffer, visit outlineVistData) {
 
 type outlineVistData interface {
 	Entering() bool
-	Time() itemTime
+	Time() isotime.GrainedTime
 	Len() int
 	Node(i int) *blackfriday.Node
 	Title(i int) string
@@ -611,7 +614,7 @@ func walkOutline(node *blackfriday.Node, visitor outlineVisitor) {
 
 type outlineWalker struct {
 	// TODO wants to extend blackfriday.nodeWalker rather than wrap blackfriday.Node.Walk
-	t     []itemTime
+	t     []isotime.GrainedTime
 	path  []*blackfriday.Node
 	title []string
 	skip  []bool
@@ -632,21 +635,20 @@ func (o *outlineWalker) find(where func(i int) bool) int {
 
 type outlineWalkerData struct {
 	entering bool
-	t        itemTime
+	t        isotime.GrainedTime
 	path     []*blackfriday.Node
 	title    []string
 }
 
 func (wd outlineWalkerData) Entering() bool               { return wd.entering }
-func (wd outlineWalkerData) Time() itemTime               { return wd.t }
+func (wd outlineWalkerData) Time() isotime.GrainedTime    { return wd.t }
 func (wd outlineWalkerData) Len() int                     { return len(wd.path) }
 func (wd outlineWalkerData) Node(i int) *blackfriday.Node { return wd.path[i] }
 func (wd outlineWalkerData) Title(i int) string           { return wd.title[i] }
 
 func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (status blackfriday.WalkStatus) {
-	var t itemTime
 	var skip bool
-	t.loc = time.Local
+	t := isotime.Time(time.Local, 0, 0, 0, 0, 0, 0)
 
 	i := len(o.t)
 	if j := i - 1; j >= 0 {
@@ -656,7 +658,9 @@ func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (s
 
 	o.tmp.Reset()
 	collectTitle(&o.tmp, node)
-	title := t.Parse(o.tmp.String())
+	title := o.tmp.String()
+
+	t, title, _ = t.Parse(title)
 
 	o.t = append(o.t, t)
 	o.path = append(o.path, node)
@@ -1067,183 +1071,6 @@ func (bw *bufWriter) walkFlush(status *blackfriday.WalkStatus) {
 	if bw.maybeFlush() != nil {
 		*status = blackfriday.Terminate
 	}
-}
-
-type timeLevel uint
-
-const (
-	timeLevelNone timeLevel = iota
-	timeLevelYear
-	timeLevelMonth
-	timeLevelDay
-	timeLevelHour
-	timeLevelMinute
-)
-
-func itemDate(year int, month time.Month, day int) itemTime {
-	return itemTime{
-		loc:   time.Local,
-		level: timeLevelDay,
-		year:  year,
-		month: month,
-		day:   day,
-	}
-}
-
-type itemTime struct {
-	level  timeLevel
-	year   int
-	month  time.Month
-	day    int
-	hour   int
-	minute int
-	loc    *time.Location
-}
-
-func (t itemTime) Any() bool {
-	return t.level > timeLevelNone
-}
-
-func (t itemTime) Equal(other itemTime) bool {
-	if other.level != t.level {
-		return false
-	}
-	switch t.level {
-	case timeLevelMinute:
-		if other.minute != t.minute {
-			return false
-		}
-		fallthrough
-	case timeLevelHour:
-		if other.loc.String() != t.loc.String() {
-			return false
-		}
-		if other.hour != t.hour {
-			return false
-		}
-		fallthrough
-	case timeLevelDay:
-		if other.day != t.day {
-			return false
-		}
-		fallthrough
-	case timeLevelMonth:
-		if other.month != t.month {
-			return false
-		}
-		fallthrough
-	case timeLevelYear:
-		if other.year != t.year {
-			return false
-		}
-	}
-	return true
-}
-
-// TODO func (t itemTime) Contains(other itemTime) bool
-
-func (t itemTime) Time() time.Time {
-	switch t.level {
-	case timeLevelNone:
-	case timeLevelYear:
-		return time.Date(t.year, 1, 1, 0, 0, 0, 0, t.loc)
-	case timeLevelMonth:
-		return time.Date(t.year, t.month, 1, 0, 0, 0, 0, t.loc)
-	case timeLevelDay:
-		return time.Date(t.year, t.month, t.day, 0, 0, 0, 0, t.loc)
-	case timeLevelHour:
-		return time.Date(t.year, t.month, t.day, t.hour, 0, 0, 0, t.loc)
-	case timeLevelMinute:
-		return time.Date(t.year, t.month, t.day, t.hour, t.minute, 0, 0, t.loc)
-	}
-	return time.Time{}
-}
-
-func (t itemTime) String() string {
-	tt := t.Time()
-	switch t.level {
-	case timeLevelNone:
-	case timeLevelYear:
-		return tt.Format("2006")
-	case timeLevelMonth:
-		return tt.Format("2006-01")
-	case timeLevelDay:
-		return tt.Format("2006-01-02")
-	case timeLevelHour:
-		return tt.Format("2006-01-02T15Z07")
-	case timeLevelMinute:
-		return tt.Format("2006-01-02T15:04Z07")
-	}
-	return ""
-}
-
-func (t *itemTime) Parse(s string) (rest string) {
-	if t.level >= timeLevelMinute {
-		return s
-	}
-
-	if rest == "" {
-		rest = strings.TrimLeftFunc(s, unicode.IsSpace)
-	}
-	for len(rest) > 0 && t.level < timeLevelMinute {
-		next := strings.TrimLeft(rest, " ")
-		if t.level < timeLevelHour {
-			if next[0] == '-' || next[0] == '/' {
-				next = next[1:]
-			}
-		} else {
-			if next[0] == ':' {
-				next = next[1:]
-			}
-		}
-
-		i := 0
-		for i < len(next) && '0' <= next[i] && next[i] <= '9' {
-			i++
-		}
-		part := next[:i]
-		next = next[i:]
-
-		num, err := strconv.Atoi(part)
-		if err != nil {
-			return rest
-		}
-
-		switch t.level {
-		case timeLevelNone:
-			t.year = num
-
-		case timeLevelYear:
-			if num == 0 || num > 12 {
-				return rest
-			}
-			t.month = time.Month(num)
-
-		case timeLevelMonth:
-			// TODO stricter max day-of-month logic
-			if num == 0 || num > 31 {
-				return rest
-			}
-			t.day = num
-
-		case timeLevelDay:
-			if num > 24 {
-				return rest
-			}
-			t.hour = num
-
-		case timeLevelHour:
-			if num > 24 {
-				return rest
-			}
-			t.minute = num
-
-		}
-		t.level++
-
-		rest = next
-	}
-	return rest
 }
 
 func quotedArgs(args []string) []byte {
