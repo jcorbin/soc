@@ -11,17 +11,21 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/google/renameio"
 	"github.com/russross/blackfriday"
 )
 
 func main() {
 	var (
+		stdin  bool
 		now    = time.Now()
 		respTo = os.Stdout
 		ui     userInterface
@@ -38,20 +42,52 @@ func main() {
 			blackfriday.BackslashLineBreak
 	)
 	ui.handle = handleUserRequest
-	ui.store.from = os.Stdin
-	ui.store.to = os.Stdout
+
+	streamFile, streamFileErr := findStreamFile()
+	flag.BoolVar(&stdin, "stdin", false,
+		"read streeam from stdin, write to stdout, instead of file storage")
+	flag.StringVar(&ui.store.filename, "file", streamFile,
+		"override path to stream file storage")
 
 	flag.Parse()
 	ui.store.md = blackfriday.New(blackfriday.WithExtensions(mdExtensisons))
 
+	if stdin {
+		ui.store.from = os.Stdin
+		ui.store.to = os.Stdout
+	} else if ui.store.filename == "" && flag.Arg(0) != "init" {
+		// TODO make init work
+		log.Printf("no stream file found; run init")
+		if streamFileErr != nil {
+			log.Printf("stream file search faile: %v", streamFileErr)
+		}
+		os.Exit(1)
+	}
+
 	// TODO detect stream file, prefer if stdin is tty; maybe only do stdio proc by flag
 	if ui.store.to == os.Stdout && respTo == os.Stdout {
-		respTo = os.Stderr // TODO in-situ response section/buffewr
+		respTo = os.Stderr // TODO in-situ response section/buffer
 	}
 
 	if err := ui.serveArgs(now, flag.Args(), respTo); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func findStreamFile() (string, error) {
+	if _, err := os.Stat("stream.md"); err == nil {
+		return filepath.Abs("stream.md")
+	}
+	// TODO prefer to anchor from git dir
+	if wd, err := os.Getwd(); err == nil {
+		for ; len(wd) > 0; wd = filepath.Dir(wd) {
+			path := filepath.Join(wd, "stream.md")
+			if _, err := os.Stat(path); err == nil {
+				return filepath.Abs(path)
+			}
+		}
+	}
+	return "", nil
 }
 
 func handleUserRequest(st Stream, req *userRequest, resp *userResponse) error {
@@ -84,9 +120,10 @@ type streamStore struct {
 	stream
 	dirty bool
 
-	// TODO support file path load and atomic write
+	filename string
+	fileid   string
+	file     *os.File
 	// TODO support change tracking
-	// TODO support metadata checking
 	from io.Reader
 	bufWriter
 }
@@ -232,8 +269,14 @@ func (req *userRequest) Err() error {
 	return req.err
 }
 
-func (st *streamStore) Root() *blackfriday.Node        { return st.doc }
-func (st *streamStore) SetRoot(root *blackfriday.Node) { st.doc = root }
+func (st *streamStore) Root() *blackfriday.Node {
+	return st.doc
+}
+
+func (st *streamStore) SetRoot(root *blackfriday.Node) {
+	st.doc = root
+	st.dirty = true
+}
 
 func (st *streamStore) with(under func(Stream) error) (err error) {
 	if st.doc == nil {
@@ -251,22 +294,84 @@ func (st *streamStore) with(under func(Stream) error) (err error) {
 	return under(st)
 }
 
-func (st *streamStore) load() error {
-	b, err := ioutil.ReadAll(st.from)
-	if err != nil {
-		return err
+func (st *streamStore) load() (rerr error) {
+	if st.filename != "" {
+		info, err := os.Stat(st.filename)
+		if err != nil {
+			return err
+		}
+		if st.fileid == infoID(info) {
+			return nil
+		}
+
+		if st.file != nil {
+			if err := st.file.Close(); err != nil {
+				return err
+			}
+			st.file = nil
+		}
+
+		file, err := os.Open(st.filename)
+		if err != nil {
+			return err
+		}
+		st.file = file
+		st.fileid = ""
+
+		defer func() {
+			if info, rerr = file.Stat(); rerr == nil {
+				st.fileid = infoID(info)
+				st.logf("loaded fileid:%q", st.fileid)
+			}
+		}()
 	}
-	st.dirty = false
-	st.doc = st.md.Parse(b)
+
+	if st.file != nil {
+		if _, err := st.file.Seek(0, os.SEEK_SET); err != nil {
+			return err
+		}
+		st.from = st.file
+		defer func() {
+			st.from = nil
+		}()
+	}
+
+	st.doc = nil
+	if st.from != nil {
+		b, err := ioutil.ReadAll(st.from)
+		if err != nil {
+			return err
+		}
+		st.dirty = false
+		st.doc = st.md.Parse(b)
+	}
+
 	return nil
 }
 
-func (st *streamStore) save() (err error) {
+func (st *streamStore) save() (rerr error) {
 	defer func() {
-		if err == nil {
+		if rerr == nil {
 			st.dirty = false
 		}
 	}()
+
+	if st.filename != "" {
+		pf, err := renameio.TempFile("", st.filename)
+		if err != nil {
+			return nil
+		}
+
+		st.to = pf
+		defer func() {
+			if rerr == nil {
+				rerr = pf.CloseAtomicallyReplace()
+			}
+			rerr = pf.Cleanup()
+			st.to = nil
+		}()
+	}
+
 	writeMarkdownInto(st.doc, &st.bufWriter)
 	return st.flush()
 }
@@ -276,6 +381,7 @@ func (st *streamStore) logf(message string, args ...interface{}) {
 		message = fmt.Sprintf(message, args...)
 	}
 
+	const logTitle = "SoC Log"
 	var (
 		logNode  *blackfriday.Node
 		doneNode *blackfriday.Node
@@ -285,7 +391,7 @@ func (st *streamStore) logf(message string, args ...interface{}) {
 		if !visit.Entering() {
 			return blackfriday.GoToNext
 		}
-		if sectionDepth(visit, "Log") == 1 {
+		if sectionDepth(visit, logTitle) == 1 {
 			logNode = visit.Node(visit.Len() - 1)
 			return blackfriday.Terminate
 		}
@@ -303,7 +409,7 @@ func (st *streamStore) logf(message string, args ...interface{}) {
 		logNode = blackfriday.NewNode(blackfriday.Heading)
 		logNode.Level = 1
 		text := blackfriday.NewNode(blackfriday.Text)
-		text.Literal = []byte("SoC Log")
+		text.Literal = []byte(logTitle)
 		logNode.AppendChild(text)
 		if doneNode != nil {
 			logNode.Level = doneNode.Level
@@ -420,7 +526,7 @@ func (req *userRequest) rollover(st Stream) error {
 
 		// TODO promote/pull-down from upcoming
 
-		if err := st.Commit("rollover"); err != nil {
+		if err := st.Commit("rollover %v", today); err != nil {
 			return err
 		}
 	}
@@ -1200,4 +1306,14 @@ func scanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	}
 	// Request more data.
 	return start, nil, nil
+}
+
+func infoID(info os.FileInfo) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "mode:%v size:%v mtime:%v", info.Mode(), info.Size(), info.ModTime())
+	switch sys := info.Sys().(type) {
+	case *syscall.Stat_t:
+		fmt.Fprintf(&sb, " uid:%v gid:%v inode:%v dev:%v", sys.Uid, sys.Gid, sys.Ino, sys.Dev)
+	}
+	return sb.String()
 }
