@@ -28,7 +28,7 @@ func main() {
 	var (
 		stdin  bool
 		now    = time.Now()
-		respTo = os.Stdout
+		respTo = io.Writer(os.Stdout)
 		ui     userInterface
 
 		mdExtensisons = 0 |
@@ -70,6 +70,8 @@ func main() {
 		respTo = os.Stderr // TODO in-situ response section/buffer
 	}
 
+	ui.store.To = &socutil.ErrWriter{Writer: ui.store.To}
+	respTo = &socutil.ErrWriter{Writer: respTo}
 	if err := ui.serveArgs(now, flag.Args(), respTo); err != nil {
 		log.Fatal(err)
 	}
@@ -126,7 +128,7 @@ type streamStore struct {
 	file     *os.File
 	// TODO support change tracking
 	from io.Reader
-	bufWriter
+	socutil.WriteBuffer
 }
 
 type stream struct {
@@ -146,7 +148,7 @@ type userRequest struct {
 }
 
 type userResponse struct {
-	bufWriter
+	socutil.WriteBuffer
 }
 
 func (ui *userInterface) serveArgs(now time.Time, args []string, respTo io.Writer) error {
@@ -1034,25 +1036,6 @@ func (mw *markdownWriter) indent(buf *bytes.Buffer) {
 	for ; i < n; i++ {
 		buf.WriteByte(' ')
 	}
-}
-
-type bufWriter struct {
-	err error
-	socutil.WriteBuffer
-}
-
-func (bw *bufWriter) MaybeFlush() error {
-	if bw.err == nil {
-		bw.err = bw.WriteBuffer.MaybeFlush()
-	}
-	return bw.err
-}
-
-func (bw *bufWriter) Flush() error {
-	if bw.err == nil {
-		bw.err = bw.WriteBuffer.Flush()
-	}
-	return bw.err
 }
 
 func infoID(info os.FileInfo) string {

@@ -67,3 +67,18 @@ func FlushLineChunks(b []byte) int {
 	}
 	return 0
 }
+
+// ErrWriter wraps a writer, tracking it's last error, and preventing futre
+// writes after a non-nil.
+type ErrWriter struct {
+	io.Writer
+	Err error
+}
+
+// Write passes through to Writer if Err is nil, retaining any returned error.
+func (ew *ErrWriter) Write(p []byte) (n int, err error) {
+	if ew.Err == nil {
+		n, ew.Err = ew.Writer.Write(p)
+	}
+	return n, ew.Err
+}
