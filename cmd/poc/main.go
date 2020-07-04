@@ -55,7 +55,7 @@ func main() {
 
 	if stdin {
 		ui.store.from = os.Stdin
-		ui.store.to = os.Stdout
+		ui.store.To = os.Stdout
 	} else if ui.store.filename == "" && flag.Arg(0) != "init" {
 		// TODO make init work
 		log.Printf("no stream file found; run init")
@@ -66,7 +66,7 @@ func main() {
 	}
 
 	// TODO detect stream file, prefer if stdin is tty; maybe only do stdio proc by flag
-	if ui.store.to == os.Stdout && respTo == os.Stdout {
+	if ui.store.To == os.Stdout && respTo == os.Stdout {
 		respTo = os.Stderr // TODO in-situ response section/buffer
 	}
 
@@ -93,7 +93,7 @@ func findStreamFile() (string, error) {
 
 func handleUserRequest(st Stream, req *userRequest, resp *userResponse) error {
 	if req.ScanArg() && req.Arg() == "outline" {
-		writeOutlineInto(st.Root(), &resp.bufWriter)
+		writeOutlineInto(st.Root(), &resp.Buffer, resp.MaybeFlush)
 	}
 	return nil
 }
@@ -157,7 +157,7 @@ func (ui *userInterface) serveArgs(now time.Time, args []string, respTo io.Write
 }
 
 func (ui *userInterface) serve(req *userRequest, respTo io.Writer) error {
-	if respTo == ui.store.to {
+	if respTo == ui.store.To {
 		return errors.New("in-situ response not supporteed") // TODO buffer then store
 	}
 	// TODO eliminate transactional load/save once we have atomic storage (rather than invalidated logging)
@@ -178,9 +178,9 @@ func (req *userRequest) serve(st Stream, handle userHandler, respTo io.Writer) (
 	}()
 
 	var resp userResponse
-	resp.to = respTo
+	resp.To = respTo
 	defer func() {
-		if ferr := resp.flush(); rerr == nil {
+		if ferr := resp.Flush(); rerr == nil {
 			rerr = ferr
 		}
 	}()
@@ -362,18 +362,18 @@ func (st *streamStore) save() (rerr error) {
 			return nil
 		}
 
-		st.to = pf
+		st.To = pf
 		defer func() {
 			if rerr == nil {
 				rerr = pf.CloseAtomicallyReplace()
 			}
 			rerr = pf.Cleanup()
-			st.to = nil
+			st.To = nil
 		}()
 	}
 
-	writeMarkdownInto(st.doc, &st.bufWriter)
-	return st.flush()
+	writeMarkdownInto(st.doc, &st.Buffer, st.MaybeFlush)
+	return st.Flush()
 }
 
 func (st *streamStore) logf(message string, args ...interface{}) {
@@ -462,19 +462,27 @@ func (st *streamStore) Commit(message string, args ...interface{}) error {
 	return nil
 }
 
-func writeMarkdownInto(node *blackfriday.Node, bw *bufWriter) {
+func writeMarkdownInto(node *blackfriday.Node, buf *bytes.Buffer, flush func() error) {
 	var mw markdownWriter
 	node.Walk(func(n *blackfriday.Node, entering bool) (status blackfriday.WalkStatus) {
-		defer bw.walkFlush(&status)
-		return mw.visitNode(&bw.buf, n, entering)
+		defer func() {
+			if flush() != nil {
+				status = blackfriday.Terminate
+			}
+		}()
+		return mw.visitNode(buf, n, entering)
 	})
 }
 
-func writeOutlineInto(node *blackfriday.Node, bw *bufWriter) {
+func writeOutlineInto(node *blackfriday.Node, buf *bytes.Buffer, flush func() error) {
 	walkOutline(node, func(visit outlineVistData) (status blackfriday.WalkStatus) {
-		defer bw.walkFlush(&status)
+		defer func() {
+			if flush() != nil {
+				status = blackfriday.Terminate
+			}
+		}()
 		if visit.Entering() {
-			writeOutlineLine(&bw.buf, visit)
+			writeOutlineLine(buf, visit)
 		}
 		return blackfriday.GoToNext
 	})
@@ -1029,47 +1037,22 @@ func (mw *markdownWriter) indent(buf *bytes.Buffer) {
 }
 
 type bufWriter struct {
-	to  io.Writer
-	buf bytes.Buffer
 	err error
+	socutil.WriteBuffer
 }
 
-func (bw *bufWriter) maybeFlush() error {
-	if bw.err != nil {
-		return bw.err
-	}
-	b := bw.shouldFlush()
-	if len(b) == 0 {
-		return nil
-	}
-	n, err := bw.to.Write(b)
-	bw.buf.Next(n)
-	return err
-}
-
-func (bw *bufWriter) shouldFlush() []byte {
-	if bw.buf.Len() == 0 {
-		return nil
-	}
-	b := bw.buf.Bytes()
-	i := bytes.LastIndexByte(b, '\n')
-	if i < 0 {
-		return nil
-	}
-	return b[:i+1]
-}
-
-func (bw *bufWriter) flush() error {
-	if _, werr := bw.buf.WriteTo(bw.to); bw.err == nil {
-		bw.err = werr
+func (bw *bufWriter) MaybeFlush() error {
+	if bw.err == nil {
+		bw.err = bw.WriteBuffer.MaybeFlush()
 	}
 	return bw.err
 }
 
-func (bw *bufWriter) walkFlush(status *blackfriday.WalkStatus) {
-	if bw.maybeFlush() != nil {
-		*status = blackfriday.Terminate
+func (bw *bufWriter) Flush() error {
+	if bw.err == nil {
+		bw.err = bw.WriteBuffer.Flush()
 	}
+	return bw.err
 }
 
 func infoID(info os.FileInfo) string {
