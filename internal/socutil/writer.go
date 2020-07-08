@@ -51,8 +51,9 @@ func (buf *WriteBuffer) MaybeFlush() error {
 	if buf.FlushPolicy == nil {
 		buf.FlushPolicy = FlushPolicyFunc(FlushLineChunks)
 	}
-	if n := buf.ShouldFlush(buf.Bytes()); n > 0 {
-		m, err := buf.To.Write(buf.Bytes()[:n+1])
+	b := buf.Bytes()
+	if n := buf.ShouldFlush(b); n > 0 {
+		m, err := buf.To.Write(b[:n])
 		buf.Next(m)
 		return err
 	}
@@ -60,7 +61,7 @@ func (buf *WriteBuffer) MaybeFlush() error {
 }
 
 // FlushLineChunks is a FlushPolicy(Func) that flushes as large a chunk as
-// possible, up to the last written newline byte.
+// possible, through the last written newline byte.
 func FlushLineChunks(b []byte) int {
 	if i := bytes.LastIndexByte(b, '\n'); i >= 0 {
 		return i + 1
