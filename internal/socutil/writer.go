@@ -124,3 +124,20 @@ func (p prefixer) Write(b []byte) (n int, err error) {
 	}
 	return n, p.buf.MaybeFlush()
 }
+
+// WriteLines runs calls the given function around an internal WriteBuffer,
+// calling MaybeFlush after every true return, stopping on false return.
+// Iteration also stop early if a write error is encountered.
+func WriteLines(to io.Writer, next func(w io.Writer, flush func()) bool) error {
+	ew, _ := to.(*ErrWriter)
+	if ew == nil {
+		ew = &ErrWriter{Writer: to}
+	}
+	var buf WriteBuffer
+	buf.To = ew
+	for ew.Err == nil && next(&buf, func() { buf.Flush() }) {
+		buf.MaybeFlush()
+	}
+	buf.Flush()
+	return ew.Err
+}
