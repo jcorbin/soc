@@ -83,3 +83,44 @@ func (ew *ErrWriter) Write(p []byte) (n int, err error) {
 	}
 	return n, ew.Err
 }
+
+// PrefixWriter returns a writer that prepends the given string before every
+// line written through it.
+// The caller SHOULD close it if they care to flush any partial final line.
+func PrefixWriter(prefix string, w io.Writer) io.WriteCloser {
+	var p prefixer
+	p.buf.To = w
+	p.prefix = prefix
+	return p
+}
+
+type prefixer struct {
+	buf    WriteBuffer
+	prefix string
+}
+
+func (p prefixer) Close() error { return p.buf.Flush() }
+func (p prefixer) Flush() error { return p.buf.Flush() }
+func (p prefixer) Write(b []byte) (n int, err error) {
+	first := true
+	for len(b) > 0 {
+		if !first {
+			p.buf.WriteString(p.prefix)
+		} else if i := p.buf.Len() - 1; i < 0 || p.buf.Bytes()[i] == '\n' {
+			p.buf.WriteString(p.prefix)
+			first = false
+		} else {
+			first = false
+		}
+
+		line := b
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			i++
+			line = b[:i]
+			b = b[i:]
+		}
+		m, _ := p.buf.Write(line)
+		n += m
+	}
+	return n, p.buf.MaybeFlush()
+}
