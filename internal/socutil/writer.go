@@ -3,6 +3,7 @@ package socutil
 import (
 	"bytes"
 	"io"
+	"strings"
 )
 
 // WriteBuffer combines a byte buffer with a destination writer and flush
@@ -87,27 +88,37 @@ func (ew *ErrWriter) Write(p []byte) (n int, err error) {
 // PrefixWriter returns a writer that prepends the given string before every
 // line written through it.
 // The caller SHOULD close it if they care to flush any partial final line.
-func PrefixWriter(prefix string, w io.Writer) io.WriteCloser {
-	var p prefixer
+func PrefixWriter(prefix string, w io.Writer) *Prefixer {
+	var p Prefixer
 	p.buf.To = w
-	p.prefix = prefix
-	return p
+	p.Prefix = prefix
+	return &p
 }
 
-type prefixer struct {
+// Prefixer supports writing a prefix before every line written to an underling writer.
+// Create with PrefixWriter().
+// Set Skip true for a one-shot "skip adding the next prefix".
+type Prefixer struct {
+	Prefix string
+	Skip   bool
 	buf    WriteBuffer
-	prefix string
 }
 
-func (p prefixer) Close() error { return p.buf.Flush() }
-func (p prefixer) Flush() error { return p.buf.Flush() }
-func (p prefixer) Write(b []byte) (n int, err error) {
+// Close flushes all internally buffered bytes to the underlying writer.
+func (p *Prefixer) Close() error { return p.buf.Flush() }
+
+// Flush flushes all internally buffered bytes to the underlying writer.
+func (p *Prefixer) Flush() error { return p.buf.Flush() }
+
+// Write writes bytes to the internal buffer, inserting Prefix before every
+// line, and then flushes all complete lines to the underlying writer.
+func (p *Prefixer) Write(b []byte) (n int, err error) {
 	first := true
 	for len(b) > 0 {
 		if !first {
-			p.buf.WriteString(p.prefix)
+			p.addPrefix()
 		} else if i := p.buf.Len() - 1; i < 0 || p.buf.Bytes()[i] == '\n' {
-			p.buf.WriteString(p.prefix)
+			p.addPrefix()
 			first = false
 		} else {
 			first = false
@@ -118,11 +129,49 @@ func (p prefixer) Write(b []byte) (n int, err error) {
 			i++
 			line = b[:i]
 			b = b[i:]
+		} else {
+			b = nil
 		}
 		m, _ := p.buf.Write(line)
 		n += m
 	}
 	return n, p.buf.MaybeFlush()
+}
+
+// WriteString writes a string to the internal buffer, inserting Prefix before
+// every line, and then flushes all complete lines to the underlying writer.
+func (p *Prefixer) WriteString(s string) (n int, err error) {
+	first := true
+	for len(s) > 0 {
+		if !first {
+			p.addPrefix()
+		} else if i := p.buf.Len() - 1; i < 0 || p.buf.Bytes()[i] == '\n' {
+			p.addPrefix()
+			first = false
+		} else {
+			first = false
+		}
+
+		line := s
+		if i := strings.IndexByte(s, '\n'); i >= 0 {
+			i++
+			line = s[:i]
+			s = s[i:]
+		} else {
+			s = ""
+		}
+		m, _ := p.buf.WriteString(line)
+		n += m
+	}
+	return n, p.buf.MaybeFlush()
+}
+
+func (p *Prefixer) addPrefix() {
+	if p.Skip {
+		p.Skip = false
+	} else {
+		p.buf.WriteString(p.Prefix)
+	}
 }
 
 // WriteLines runs calls the given function around an internal WriteBuffer,
