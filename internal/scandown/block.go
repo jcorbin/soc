@@ -1,5 +1,8 @@
 package scandown
 
+// TODO evaluate handling of interior blanks
+// TODO recognize closing code fence
+
 import (
 	"bytes"
 	"fmt"
@@ -13,22 +16,20 @@ const (
 	Document
 	Heading
 	Ruler
-	SetextUnderline
 	Blockquote
 	List
 	Item
 	Paragraph
 	Codefence
 	Codeblock
-	HTML // TODO
+	HTMLBlock // TODO
 )
 
 type Block struct {
-	Type  BlockType
-	Delim byte
-	Width int
-	// TODO Indent int
-	// TODO export fields? or just semantic reader methods
+	Type   BlockType
+	Delim  byte
+	Width  int
+	Indent int
 }
 
 type BlockStack struct {
@@ -80,7 +81,7 @@ func (blocks *BlockStack) Scan(data []byte, atEOF bool) (advance int, token []by
 		if i < 0 {
 			blocks.nextID = 0
 			blocks.truncate(0)
-			blocks.open(Block{Document, 0, 0}, -1)
+			blocks.open(Block{Document, 0, 0, 0}, -1)
 			i = 0
 		}
 
@@ -100,82 +101,186 @@ func (blocks *BlockStack) Scan(data []byte, atEOF bool) (advance int, token []by
 		sol        = start
 		blanks     = 0
 	)
+
 scanLine:
-	for {
-		sol += len(line)
-		if blanks == 0 {
-			end = sol
+	sol += len(line)
+	if blanks == 0 {
+		end = sol
+	}
+	line = data[sol:]
+	if len(line) == 0 {
+		if !atEOF {
+			return advance, nil, nil
 		}
-		line = data[sol:]
-		if len(line) == 0 {
-			if !atEOF {
-				return advance, nil, nil
-			}
-
+		if i := len(blocks.id) - 1; blocks.block[i].Type != Document {
 			// close a block until Document
-			if i := len(blocks.id) - 1; blocks.block[i].Type != Document {
-				if isContainer(blocks.block[i].Type) {
-					end = start
-				}
-				blocks.offset[i] = end
-				return start, data[start:end], nil
+			if isContainer(blocks.block[i].Type) {
+				end = start
 			}
-
+			blocks.offset[i] = end
+			return start, data[start:end], nil
+		}
+		if blanks > start {
 			// return a final text token containing trailing blank lines, nil
-			if blanks > start {
-				blocks.offset = append(blocks.offset, len(data))
-				return start, data[start:], nil
-			}
-
-			// close Document
-			blocks.offset[0] = end
-			return end, nil, nil
+			blocks.offset = append(blocks.offset, len(data))
+			return start, data[start:], nil
 		}
+		// close Document
+		blocks.offset[0] = sol
+		return sol, nil, nil
+	}
 
-		if eol := bytes.IndexByte(line, '\n'); eol >= 0 {
-			line = line[:eol+1]
-		} else if !atEOF {
-			return 0, nil, nil
-		}
+	// either find a new line, or read more data until EOF
+	if eol := bytes.IndexByte(line, '\n'); eol >= 0 {
+		line = line[:eol+1]
+	} else if !atEOF {
+		return 0, nil, nil
+	}
 
-		// process the next non-empty line
-		if len(bytes.TrimSpace(line)) > 0 {
-			break
-		}
-
+	// TODO pushdown
+	if len(bytes.TrimSpace(line)) <= 0 {
 		blanks++
 		blocks.block[0].Width++
-	}
-
-	// matching non-empty lines through the open block stack
-	var (
-		tail    = line
-		prior   Block
-		matched = 0
-	)
-	for matched < len(blocks.id) {
-		k := blocks.block[matched]
-		if blanks > 0 && !mayContainBlanks(k.Type) {
-			break
-		}
-		rest := continuesBlock(prior, k, tail)
-		if rest == nil {
-			break
-		}
-		tail = rest
-		matched++
-		prior = k
-	}
-
-	// either open a new block
-	opened, cont := nextBlock(prior, tail)
-	// or keep scanning lines
-	if opened.Type == 0 {
 		goto scanLine
 	}
 
-	// first close any unmatched blocks
-	if matched < len(blocks.id) {
+	// matching lines down the open block stack
+	var (
+		tail    = line
+		matchi  = 0
+		prior   Block
+		opened  Block
+		matched Block
+	)
+	for ; matchi < len(blocks.id) && opened.Type == 0 && len(tail) > 0; matchi, prior = matchi+1, matched {
+		matched = blocks.block[matchi]
+		if blanks > 0 && !mayContainBlanks(matched.Type) {
+			break
+		}
+
+		switch matched.Type {
+		case Document:
+			continue
+
+		case Paragraph:
+			if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
+				if delim, _, cont := ruler(cont, '=', '-'); cont != nil {
+					blocks.truncate(matchi)
+					if delim == '=' {
+						opened = Block{Heading, delim, 1, 0}
+					} else {
+						opened = Block{Heading, delim, 2, 0}
+					}
+					tail = cont
+				}
+				continue
+			}
+
+		case Codeblock:
+			if indent, cont := trimIndent(tail, 0, matched.Indent); indent >= matched.Indent {
+				tail = cont
+				continue
+			}
+
+		case Codefence:
+			_, tail = trimIndent(tail, 0, matched.Indent)
+			continue
+
+		case Blockquote:
+			if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
+				if delim, _, cont := delimiter(cont, 3, '>'); delim != 0 {
+					if post, _ := trimIndent(cont, 1, 3); post > 0 || len(cont) == 0 {
+						tail = cont
+						continue
+					}
+				}
+			}
+
+		case List:
+			if indent, cont := trimIndent(tail, 0, matched.Indent); indent >= matched.Indent {
+				var delim byte
+				if _, inCont := trimIndent(tail, 0, 3); len(inCont) > 0 {
+					delim, _, _ = listMarker(inCont)
+				}
+				if delim == 0 || delim == matched.Delim {
+					tail = cont
+					continue
+				}
+			}
+
+		case Item:
+			if indent, cont := trimIndent(tail, 0, matched.Width); indent >= matched.Width {
+				tail = cont
+				continue
+			}
+		}
+
+		break
+	}
+
+	if opened.Type == 0 && len(tail) > 0 {
+		opened = func() Block {
+			// TODO need to honor prior delimiter, passing it to trimIndent to
+			// discount any initial tab
+
+			// TODO hoist
+			if len(bytes.TrimSpace(tail)) == 0 {
+				return Block{}
+			}
+
+			in, cont := trimIndent(tail, 0, 4)
+
+			// Codeblock
+			if in == 4 {
+				return Block{Codeblock, 0, 0, in}
+			}
+
+			// blank line without enough indent to open a code block
+			if len(cont) == 0 {
+				return Block{}
+			}
+
+			// Codefence
+			if delim, width, _ := fence(cont, 3, '`', '~'); delim != 0 {
+				return Block{Codefence, delim, width, in}
+			}
+
+			// Ruler
+			if delim, width, _ := ruler(cont, '-', '_', '*'); delim != 0 {
+				return Block{Ruler, delim, width, in}
+			}
+
+			// Heading (atx marked)
+			if delim, level, _ := delimiter(cont, 6, '#'); delim != 0 {
+				return Block{Heading, delim, level, in}
+			}
+
+			// Blockquote
+			if delim, width, cont := delimiter(cont, 3, '>'); delim != 0 {
+				if post, _ := trimIndent(cont, 1, 3); post > 0 || len(cont) == 0 {
+					return Block{Blockquote, delim, width + post, in}
+				}
+			}
+
+			// List/Item
+			if delim, width, _ := listMarker(cont); delim != 0 {
+				if prior.Type != List {
+					return Block{List, delim, width, in}
+				}
+				return Block{Item, delim, width, in}
+			}
+
+			// Paragraph
+			return Block{Paragraph, 0, 0, in}
+		}()
+
+		if opened.Type == 0 {
+			goto scanLine
+		}
+	}
+
+	// close the head block if it didn't match
+	if matchi < len(blocks.id) {
 		blocks.offset[len(blocks.id)-1] = end
 		return start, data[start:end], nil
 	}
@@ -189,18 +294,6 @@ scanLine:
 
 	// open the block, returning a container token, or continuing to scan leafs
 	switch opened.Type {
-	case SetextUnderline:
-		end = sol + len(line)
-		opened.Type = Heading
-		opened.Width = 1
-		if opened.Delim == '-' {
-			opened.Width = 2
-		}
-		i := len(blocks.id) - 1
-		blocks.block[i] = opened
-		blocks.offset[i] = end
-		return start, data[start:end], nil
-
 	case Heading, Ruler:
 		end = sol + len(line)
 		blocks.open(opened, end)
@@ -212,7 +305,7 @@ scanLine:
 		return start, data[start:end], nil
 
 	case Item, Blockquote:
-		end = sol + len(line) - len(cont)
+		end = sol + opened.Width
 		blocks.open(opened, -1)
 		blocks.offset = append(blocks.offset, end)
 		return start, data[start:end], nil
@@ -263,174 +356,20 @@ func isContainer(t BlockType) bool {
 	}
 }
 
-// TODO need to pass a `prior int` through to trimIndent so that tab may be
-// discounted before sub-structure
-
-type blockRecognizer func(prior Block, line []byte) (Block, []byte) // TODO abstract this for extensibility
-
-func nextBlock(prior Block, line []byte) (Block, []byte) {
-	for _, r := range []blockRecognizer{
-		atxHeading,
-		blockQuote,
-		listItem,
-		codeFence,
-		thematicBreak,
-		paragraph,
-	} {
-		if block, tail := r(prior, line); tail != nil {
-			return block, tail
+func listMarker(line []byte) (delim byte, width int, cont []byte) {
+	delim, width, tail := delimiter(line, 3, '-', '*', '+')
+	if delim == 0 {
+		delim, width, tail = ordinal(line)
+	}
+	if delim != 0 {
+		if in, cont := trimIndent(tail, 1, 3); in > 0 || len(cont) == 0 {
+			return delim, width + in, cont
 		}
 	}
-	return Block{}, nil
-}
-
-func continuesBlock(p, b Block, line []byte) []byte {
-	switch b.Type {
-	case Document:
-		return line
-
-	case Heading:
-		return nil
-
-	case Paragraph:
-		// TODO unless interrupted?
-		return line
-
-	case List:
-		// lists are continued if their items are
-		return line
-
-	case Item:
-		// sufficient hanging indent
-		if indent, tail := trimIndent(line, 0, b.Width); indent >= b.Width {
-			return tail
-		}
-		// sibling item
-		if i, cont := listItem(p, line); cont != nil && i.Delim == b.Delim {
-			return line // preserve marker to open new block
-		}
-		return nil
-
-	case Blockquote:
-		if q, cont := blockQuote(p, line); cont != nil && q.Delim == b.Delim {
-			return cont
-		}
-		return nil
-
-	case Codefence:
-		if indent, tail := trimIndent(line, 0, b.Width); indent >= b.Width {
-			return tail
-		}
-		// TODO recognize closing fence
-		return line
-
-	case Codeblock:
-		// TODO converge indent trim state with fence
-		if indent, tail := trimIndent(line, 0, b.Width); indent >= b.Width {
-			return tail
-		}
-		return nil
-
-	default:
-		return nil
-	}
-}
-
-func atxHeading(prior Block, line []byte) (Block, []byte) {
-	if isContainer(prior.Type) {
-		_, tail := trimIndent(line, 0, 3)
-		if head, level, tail := delimiter(tail, 6, '#'); tail != nil {
-			_, tail = trimIndent(tail, 0, len(line))
-			return Block{Heading, head, level}, tail
-		}
-	}
-	return Block{}, nil
-}
-
-func blockQuote(prior Block, line []byte) (Block, []byte) {
-	if isContainer(prior.Type) {
-		_, tail := trimIndent(line, 0, 3)
-		if quote, _, tail := delimiter(tail, 3, '>'); tail != nil {
-			width := len(line) - len(tail)
-			if in, tail := trimIndent(tail, 1, 3); in > 0 {
-				return Block{Blockquote, quote, width}, tail
-			}
-		}
-	}
-	return Block{}, nil
-}
-
-func listItem(prior Block, line []byte) (Block, []byte) {
-	// TODO recognize sibling vs sub by returning List? take branch away from opened.t switch?
-	if isContainer(prior.Type) {
-		_, tail := trimIndent(line, 0, 3)
-		delim, _, cont := delimiter(tail, 3, 1, '-', '*', '+')
-		if cont == nil {
-			if delim, _, cont = ordinal(tail); delim != ')' && delim != '.' {
-				cont = nil
-			}
-		}
-		if cont != nil {
-			width := len(line) - len(cont)
-			if in, cont := trimIndent(cont, 1, 3); in > 0 {
-				// TODO viva la sibling vs child
-				if prior.Type != List {
-					return Block{List, delim, width + in}, line
-				}
-				return Block{Item, delim, width + in}, cont
-			}
-		}
-	}
-	return Block{}, nil
-}
-
-func codeFence(prior Block, line []byte) (Block, []byte) {
-	if isContainer(prior.Type) {
-		in, tail := trimIndent(line, 0, 3)
-		if delim, _, tail := fence(tail, 3, '`', '~'); tail != nil {
-			// TODO remember fence width for close matching
-			return Block{Codefence, delim, in}, tail
-		}
-	}
-	return Block{}, nil
-}
-
-func thematicBreak(prior Block, line []byte) (Block, []byte) {
-	if prior.Type == Paragraph {
-		if delim, width, tail := ruler(line, '=', '-', '_', '*'); tail != nil {
-			switch delim {
-			case '=', '-':
-				return Block{SetextUnderline, delim, width}, tail
-			case '_', '*':
-				return Block{Ruler, delim, width}, tail
-			}
-		}
-	} else if isContainer(prior.Type) {
-		if delim, width, tail := ruler(line, '-', '_', '*'); tail != nil {
-			return Block{Ruler, delim, width}, tail
-		}
-	}
-	return Block{}, nil
-}
-
-func paragraph(prior Block, line []byte) (Block, []byte) {
-	if isContainer(prior.Type) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			return Block{}, nil
-		}
-		in, tail := trimIndent(line, 0, 4)
-		if in == 4 {
-			return Block{Codeblock, 0, 0}, tail
-		}
-		return Block{Paragraph, 0, 0}, tail
-	}
-	return Block{}, nil
+	return 0, 0, nil
 }
 
 func delimiter(line []byte, maxWidth int, marks ...byte) (delim byte, width int, tail []byte) {
-	if tail = line; len(tail) < 1 {
-		return 0, 0, nil
-	}
 	if delim = tail[0]; !isByte(delim, marks...) {
 		return 0, 0, nil
 	}
@@ -469,18 +408,13 @@ func ordinal(line []byte) (delim byte, width int, tail []byte) {
 		}
 		break
 	}
-	if width < 1 {
+	if delim == 0 || width < 1 {
 		return 0, 0, nil
 	}
 	return delim, width, tail
 }
 
 func fence(line []byte, min int, marks ...byte) (fence byte, width int, tail []byte) {
-	// TODO allow indent?
-	if len(line) < 1 {
-		return 0, 0, nil
-	}
-
 	if fence = line[0]; !isByte(fence, marks...) {
 		return 0, 0, nil
 	}
@@ -500,10 +434,6 @@ func fence(line []byte, min int, marks ...byte) (fence byte, width int, tail []b
 }
 
 func ruler(line []byte, marks ...byte) (rule byte, width int, tail []byte) {
-	// TODO allow indent?
-	if len(line) < 1 {
-		return 0, 0, nil
-	}
 	if rule = line[0]; !isByte(rule, marks...) {
 		return 0, 0, nil
 	}
@@ -623,8 +553,6 @@ func (t BlockType) Format(f fmt.State, _ rune) {
 		io.WriteString(f, "Heading")
 	case Paragraph:
 		io.WriteString(f, "Paragraph")
-	case SetextUnderline:
-		io.WriteString(f, "SetextUnderline")
 	case Ruler:
 		io.WriteString(f, "Ruler")
 	case List:
@@ -637,8 +565,8 @@ func (t BlockType) Format(f fmt.State, _ rune) {
 		io.WriteString(f, "Codefence")
 	case Codeblock:
 		io.WriteString(f, "Codeblock")
-	case HTML:
-		io.WriteString(f, "HTML")
+	case HTMLBlock:
+		io.WriteString(f, "HTMLBlock")
 	default:
 		fmt.Fprintf(f, "InvalidBlock%v", int(t))
 	}
