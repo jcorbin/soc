@@ -15,11 +15,11 @@ Started implementing `internal/scandown` based around these points:
   minimize resources spent parsing such
 
 The first half of `scandown` is now prototyped:
-- `scandown.BlockStack.Scan()` implements a `bufio.SplitFunc`, allowing
-  markdown block structure to be scanned from a stream. Memory overhead scales
-  with document complexity ( deepest block structure ), but should feel
-  constant in practice ( since most documents exist within a low band of
-  complexity ).
+- [`scandown.BlockStack.Scan()`](internal/scandown/block.go) implements a
+  `bufio.SplitFunc`, allowing markdown block structure to be scanned from a
+  stream. Memory overhead scales with document complexity ( deepest block
+  structure ), but should feel constant in practice ( since most documents
+  exist within a low band of complexity ).
 
   NOTE: in particular, memory overhead does **not** scale with file size.
 - see or run [`cmd/scanex/main.go`](cmd/scanex/main.go) for example usage
