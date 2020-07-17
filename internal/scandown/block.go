@@ -1,8 +1,5 @@
 package scandown
 
-// TODO evaluate handling of interior blanks
-// TODO recognize closing code fence
-
 import (
 	"bytes"
 	"fmt"
@@ -13,6 +10,7 @@ type BlockType int
 
 const (
 	noBlock BlockType = iota
+	blank
 	Document
 	Heading
 	Ruler
@@ -33,10 +31,278 @@ type Block struct {
 }
 
 type BlockStack struct {
-	id     []int   // block id
-	block  []Block // block kind (type, delim, width)
 	offset []int   // within current scan window
+	block  []Block // block kind (type, delim, width)
+	id     []int   // block id
 	nextID int     // next block id
+}
+
+func (blocks *BlockStack) Scan(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	// decrement block offsets by final advance
+	defer func() {
+		if advance > 0 {
+			for i := 0; i < len(blocks.offset); i++ {
+				blocks.offset[i] -= advance
+			}
+		}
+	}()
+
+	for i := len(blocks.offset) - 1; ; i-- {
+		// (re)initialize empty blocks
+		if i < 0 {
+			blocks.offset = append(blocks.offset[:0], -1)
+			blocks.block = append(blocks.block[:0], Block{Document, 0, 0, 0})
+			blocks.id = append(blocks.id[:0], 0)
+			blocks.nextID = 1
+			break
+		}
+
+		// pop all blocks ended by a prior Scan
+		end := blocks.offset[i]
+		if end < 0 {
+			i++
+			blocks.offset = blocks.offset[:i]
+			blocks.block = blocks.block[:i]
+			blocks.id = blocks.id[:i]
+			break
+		}
+
+		// advance past any prior consumed bytes
+		if end > advance {
+			advance = end
+		}
+	}
+
+	// line consumption loop state
+	var (
+		start, end = advance, -1 // proto-token offsets withing the data buffer
+		sol        = start       // offset of the current line being consumed
+		line       []byte        // its bytes within the data buffer
+	)
+	defer func() {
+		// construct token when returning nil-error and non-negative end
+		if err == nil && end >= start {
+			token = data[start:end]
+		}
+	}()
+
+	// line consumption loop:
+	// - scans the next token of block structure
+	// - a container block open/close token will be empty but non-nil
+	// - a leaf block token spans, potentially many, lines
+	// - an interstitial space token is attributed to the deepest container
+	//   block possible, between any sibling leaves
+consumeLine: // labeled to clarify `continue` sites, some hundreds of lines hence
+	for {
+		// start out a(nother) line after after the last one
+		sol += len(line)
+		line = data[sol:]
+
+		// scan all bytes until newline or EOF
+		if eol := bytes.IndexByte(line, '\n'); eol >= 0 {
+			line = line[:eol+1]
+		} else if !atEOF {
+			return
+		} else if len(line) == 0 {
+			if i := len(blocks.offset) - 1; i == 0 {
+				blocks.offset = append(blocks.offset, sol)
+			} else {
+				end = sol
+				blocks.offset[i] = end
+			}
+			return
+		}
+
+		// consume line bytes, matching prior blocks
+		var (
+			tail   = trimNewline(line)
+			priori int
+			prior  Block
+		)
+	matchPrior:
+		for priori = 0; priori < len(blocks.block); priori++ {
+			switch prior = blocks.block[priori]; prior.Type {
+			case Document:
+				// any line continues the document
+
+			case blank:
+				// blank line runs are continued only by blank lines short
+				// enough to not open an indented codeblock
+				if indent, cont := trimIndent(tail, 0, 4); indent == 4 || len(cont) > 0 {
+					break matchPrior
+				}
+
+			case Paragraph:
+				// must check for all other block open markers before deciding
+				// if a paragraph has been continued or terminated
+				break matchPrior
+
+			case Codefence:
+				// fenced code blocks are continued until their ending fence
+				// ( or end of container, by failing a prior round of this loop )
+				_, tail = trimIndent(tail, 0, prior.Indent)
+				if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
+					delim, _, cont := fence(cont, prior.Width, prior.Delim)
+					if delim != 0 && len(bytes.Trim(cont, " ")) == 0 {
+						end = sol + len(line)
+						break matchPrior
+					}
+				}
+
+			case Codeblock:
+				// indented codeblocks are continued by sufficient indent and blank lines
+				if indent, cont := trimIndent(tail, 0, prior.Indent); indent < prior.Indent && len(bytes.TrimSpace(cont)) != 0 {
+					break matchPrior
+				} else {
+					tail = cont
+				}
+
+			case Blockquote:
+				// block quotes are continued when opened and by additional quote markers
+				if offset := sol + blocks.offset[priori]; offset == -1 {
+					tail = tail[prior.Width:] // newly opened
+				} else if _, cont := trimIndent(tail, 0, 3); len(cont) == 0 {
+					break matchPrior
+				} else if delim, _, cont := quoteMarker(cont); delim == 0 {
+					break matchPrior
+				} else {
+					tail = cont
+				}
+
+			case List:
+				// lists are continued, after open, by sibling items or terminated by a differing delimiter
+				// otherwise continuation is handled by the next ( Item ) stack entry
+
+				if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
+					if delim, _, cont := listMarker(cont); delim != 0 {
+						if delim == prior.Delim {
+							// TODO seems too hacky
+							if priori++; priori < len(blocks.offset) {
+								if offset := sol + blocks.offset[priori]; offset == -1 {
+									tail = cont
+									priori++
+									continue matchPrior
+								}
+							}
+						}
+						break matchPrior
+					}
+				}
+
+			case Item:
+				// list items are continued when opened and by sufficient indent
+				if offset := sol + blocks.offset[priori]; offset == -1 {
+					tail = tail[prior.Width:] // newly opened
+				} else if indent, cont := trimIndent(tail, 0, prior.Indent); len(cont) > 0 && indent < prior.Indent {
+					break matchPrior
+				} else {
+					tail = cont
+				}
+
+			default:
+				err = fmt.Errorf("unimplemented match prior[%v]: %v", priori, prior)
+				return
+			}
+		}
+
+		// recognize remaining line bytes, finalizing any paragraph continuation match from above
+		// - may terminate blocks suffix unmatched above
+		// - may open under prior container
+		// - may interrupt prior paragraph
+		// - may transform prior paragraph into a setext header
+		// - may terminate a paragraph on blank line
+		// - may open a paragraph or blank leaf
+		// - may lazily continue a head paragraph, despite unmatched priors
+		var opened Block
+		if priori < len(blocks.id) || isContainer(prior.Type) {
+			// TODO honor prior delimiter, passing non-0 prior discount to trimIndent
+			indent, cont := trimIndent(tail, 0, 4)
+			if prior.Type != Paragraph && indent == 4 {
+				opened = Block{Codeblock, 0, 0, indent}
+			} else if len(bytes.TrimSpace(cont)) == 0 {
+				opened = Block{blank, 0, 0, 0}
+			} else if delim, _, _ := ruler(cont, '=', '-'); prior.Type == Paragraph && delim != 0 {
+				opened = Block{Heading, delim, 1, indent}
+				if delim == '-' {
+					opened.Width = 2
+				}
+				blocks.offset = blocks.offset[:priori]
+				blocks.block = blocks.block[:priori]
+				blocks.id = blocks.id[:priori]
+			} else if delim, width, _ := fence(cont, 3, '`', '~'); delim != 0 {
+				opened = Block{Codefence, delim, width, indent}
+			} else if delim, width, _ := ruler(cont, '-', '_', '*'); delim != 0 {
+				opened = Block{Ruler, delim, width, indent}
+			} else if delim, level, _ := delimiter(cont, 6, '#'); delim != 0 {
+				opened = Block{Heading, delim, level, indent}
+			} else if delim, width, _ := quoteMarker(cont); delim != 0 {
+				opened = Block{Blockquote, delim, width, indent}
+			} else if delim, width, _ := listMarker(cont); delim != 0 {
+				if prior.Type != List {
+					opened = Block{List, delim, 0, 0}
+				} else {
+					opened = Block{Item, delim, width, indent + width}
+				}
+			} else if prior.Type == Paragraph {
+				priori++
+			} else if n := len(blocks.id); blocks.block[n-1].Type == Paragraph {
+				priori = n
+			} else {
+				opened = Block{Paragraph, 0, 0, indent}
+			}
+		}
+
+		// TODO seems a bit hacky
+		if priori == len(blocks.id) && prior.Type == List && opened.Type != Item && opened.Type != blank {
+			priori--
+		}
+
+		// close the head block if unmatched
+		if priori < len(blocks.id) {
+			if end < start {
+				end = sol
+			}
+			if prior.Type == blank {
+				blocks.offset = append(blocks.offset[:priori], end)
+				blocks.block = blocks.block[:priori]
+				blocks.id = blocks.id[:priori]
+			} else {
+				blocks.offset[len(blocks.offset)-1] = end
+			}
+			return
+		}
+
+		// continue scan until a block open
+		if opened.Type == 0 {
+			// TODO leaf token fragmentation (to limit the buffer liability for large leaves)
+			continue consumeLine
+		}
+
+		// finally ready to open a block, returning any container open token
+		if i := len(blocks.id); i < len(blocks.offset) {
+			blocks.offset[i] = end
+		} else {
+			blocks.offset = append(blocks.offset, end)
+		}
+		blocks.block = append(blocks.block, opened)
+		blocks.id = append(blocks.id, blocks.nextID)
+		blocks.nextID++
+
+		switch opened.Type {
+		case Heading, Ruler:
+			// these end on the line detected
+			end = sol + len(line)
+			blocks.offset[len(blocks.offset)-1] = end
+			return
+
+		case List, Item, Blockquote:
+			// these emit an empty token on open
+			end = start
+			return
+		}
+
+		// continue consumeLine // implicit since this is loop tail
+	}
 }
 
 func (blocks *BlockStack) Offset() (n int) {
@@ -59,292 +325,12 @@ func (blocks *BlockStack) Head() (id int, b Block, open bool) {
 	return blocks.Block(len(blocks.id) - 1)
 }
 
-func (blocks *BlockStack) Len() int { return len(blocks.id) }
+func (blocks *BlockStack) Len() int {
+	return len(blocks.id)
+}
 
 func (blocks *BlockStack) Block(i int) (id int, b Block, open bool) {
 	return blocks.id[i], blocks.block[i], blocks.offset[i] < 0
-}
-
-func (blocks *BlockStack) Scan(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	// advance decrements block offsets
-	defer func() {
-		if advance > 0 {
-			for i := 0; i < len(blocks.offset); i++ {
-				blocks.offset[i] -= advance
-			}
-		}
-	}()
-
-	{
-		// (re)initialize when empty
-		i := len(blocks.offset) - 1
-		if i < 0 {
-			blocks.nextID = 0
-			blocks.truncate(0)
-			blocks.open(Block{Document, 0, 0, 0}, -1)
-			i = 0
-		}
-
-		// prune the last closed block
-		if end := blocks.offset[i]; end >= 0 {
-			blocks.truncate(i)
-			if i == 0 {
-				blocks.offset = append(blocks.offset, 0)
-			}
-			advance = end
-		}
-	}
-
-	var (
-		line       []byte
-		start, end = advance, -1
-		sol        = start
-		blanks     = 0
-	)
-
-scanLine:
-	sol += len(line)
-	if blanks == 0 {
-		end = sol
-	}
-	line = data[sol:]
-	if len(line) == 0 {
-		if !atEOF {
-			return advance, nil, nil
-		}
-		if i := len(blocks.id) - 1; blocks.block[i].Type != Document {
-			// close a block until Document
-			if isContainer(blocks.block[i].Type) {
-				end = start
-			}
-			blocks.offset[i] = end
-			return start, data[start:end], nil
-		}
-		if blanks > start {
-			// return a final text token containing trailing blank lines, nil
-			blocks.offset = append(blocks.offset, len(data))
-			return start, data[start:], nil
-		}
-		// close Document
-		blocks.offset[0] = sol
-		return sol, nil, nil
-	}
-
-	// either find a new line, or read more data until EOF
-	if eol := bytes.IndexByte(line, '\n'); eol >= 0 {
-		line = line[:eol+1]
-	} else if !atEOF {
-		return 0, nil, nil
-	}
-
-	// TODO pushdown
-	if len(bytes.TrimSpace(line)) <= 0 {
-		blanks++
-		blocks.block[0].Width++
-		goto scanLine
-	}
-
-	// matching lines down the open block stack
-	var (
-		tail    = line
-		matchi  = 0
-		prior   Block
-		opened  Block
-		matched Block
-	)
-	for ; matchi < len(blocks.id) && opened.Type == 0 && len(tail) > 0; matchi, prior = matchi+1, matched {
-		matched = blocks.block[matchi]
-		if blanks > 0 && !mayContainBlanks(matched.Type) {
-			break
-		}
-
-		switch matched.Type {
-		case Document:
-			continue
-
-		case Paragraph:
-			if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
-				if delim, _, cont := ruler(cont, '=', '-'); cont != nil {
-					blocks.truncate(matchi)
-					if delim == '=' {
-						opened = Block{Heading, delim, 1, 0}
-					} else {
-						opened = Block{Heading, delim, 2, 0}
-					}
-					tail = cont
-				}
-				continue
-			}
-
-		case Codeblock:
-			if indent, cont := trimIndent(tail, 0, matched.Indent); indent >= matched.Indent {
-				tail = cont
-				continue
-			}
-
-		case Codefence:
-			_, tail = trimIndent(tail, 0, matched.Indent)
-			continue
-
-		case Blockquote:
-			if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
-				if delim, _, cont := delimiter(cont, 3, '>'); delim != 0 {
-					if post, _ := trimIndent(cont, 1, 3); post > 0 || len(cont) == 0 {
-						tail = cont
-						continue
-					}
-				}
-			}
-
-		case List:
-			if indent, cont := trimIndent(tail, 0, matched.Indent); indent >= matched.Indent {
-				var delim byte
-				if _, inCont := trimIndent(tail, 0, 3); len(inCont) > 0 {
-					delim, _, _ = listMarker(inCont)
-				}
-				if delim == 0 || delim == matched.Delim {
-					tail = cont
-					continue
-				}
-			}
-
-		case Item:
-			if indent, cont := trimIndent(tail, 0, matched.Width); indent >= matched.Width {
-				tail = cont
-				continue
-			}
-		}
-
-		break
-	}
-
-	if opened.Type == 0 && len(tail) > 0 {
-		opened = func() Block {
-			// TODO need to honor prior delimiter, passing it to trimIndent to
-			// discount any initial tab
-
-			// TODO hoist
-			if len(bytes.TrimSpace(tail)) == 0 {
-				return Block{}
-			}
-
-			in, cont := trimIndent(tail, 0, 4)
-
-			// Codeblock
-			if in == 4 {
-				return Block{Codeblock, 0, 0, in}
-			}
-
-			// blank line without enough indent to open a code block
-			if len(cont) == 0 {
-				return Block{}
-			}
-
-			// Codefence
-			if delim, width, _ := fence(cont, 3, '`', '~'); delim != 0 {
-				return Block{Codefence, delim, width, in}
-			}
-
-			// Ruler
-			if delim, width, _ := ruler(cont, '-', '_', '*'); delim != 0 {
-				return Block{Ruler, delim, width, in}
-			}
-
-			// Heading (atx marked)
-			if delim, level, _ := delimiter(cont, 6, '#'); delim != 0 {
-				return Block{Heading, delim, level, in}
-			}
-
-			// Blockquote
-			if delim, width, cont := delimiter(cont, 3, '>'); delim != 0 {
-				if post, _ := trimIndent(cont, 1, 3); post > 0 || len(cont) == 0 {
-					return Block{Blockquote, delim, width + post, in}
-				}
-			}
-
-			// List/Item
-			if delim, width, _ := listMarker(cont); delim != 0 {
-				if prior.Type != List {
-					return Block{List, delim, width, in}
-				}
-				return Block{Item, delim, width, in}
-			}
-
-			// Paragraph
-			return Block{Paragraph, 0, 0, in}
-		}()
-
-		if opened.Type == 0 {
-			goto scanLine
-		}
-	}
-
-	// close the head block if it didn't match
-	if matchi < len(blocks.id) {
-		blocks.offset[len(blocks.id)-1] = end
-		return start, data[start:end], nil
-	}
-
-	// then return any blank line run token
-	if blanks > 0 {
-		// NOTE this passes an offset to prune, without actually opening a block
-		blocks.offset = append(blocks.offset, sol)
-		return start, data[start:sol], nil
-	}
-
-	// open the block, returning a container token, or continuing to scan leafs
-	switch opened.Type {
-	case Heading, Ruler:
-		end = sol + len(line)
-		blocks.open(opened, end)
-		return start, data[start:end], nil
-
-	case List:
-		end = start
-		blocks.open(opened, -1)
-		return start, data[start:end], nil
-
-	case Item, Blockquote:
-		end = sol + opened.Width
-		blocks.open(opened, -1)
-		blocks.offset = append(blocks.offset, end)
-		return start, data[start:end], nil
-
-	case Codeblock, Codefence, Paragraph:
-		end = sol + len(line)
-		blocks.open(opened, -1)
-		goto scanLine
-
-	default:
-		return 0, nil, fmt.Errorf("unimplemented open %v", opened)
-	}
-}
-
-func (blocks *BlockStack) open(b Block, end int) {
-	i := len(blocks.id)
-	blocks.id = append(blocks.id, blocks.nextID)
-	blocks.block = append(blocks.block, b)
-	if i < len(blocks.offset) {
-		blocks.offset[i] = end
-	} else {
-		blocks.offset = append(blocks.offset, end)
-	}
-	blocks.nextID++
-}
-
-func (blocks *BlockStack) truncate(i int) {
-	blocks.id = blocks.id[:i]
-	blocks.block = blocks.block[:i]
-	blocks.offset = blocks.offset[:i]
-}
-
-func mayContainBlanks(t BlockType) bool {
-	switch t {
-	case Document, Codefence, Codeblock:
-		return true
-	default:
-		return false
-	}
 }
 
 func isContainer(t BlockType) bool {
@@ -354,6 +340,15 @@ func isContainer(t BlockType) bool {
 	default:
 		return false
 	}
+}
+
+func quoteMarker(line []byte) (delim byte, width int, cont []byte) {
+	if delim, width, tail := delimiter(line, 3, '>'); delim != 0 {
+		if in, cont := trimIndent(tail, 1, 3); in > 0 || len(cont) == 0 {
+			return delim, width + in, cont
+		}
+	}
+	return 0, 0, nil
 }
 
 func listMarker(line []byte) (delim byte, width int, cont []byte) {
@@ -370,12 +365,12 @@ func listMarker(line []byte) (delim byte, width int, cont []byte) {
 }
 
 func delimiter(line []byte, maxWidth int, marks ...byte) (delim byte, width int, tail []byte) {
-	if delim = tail[0]; !isByte(delim, marks...) {
+	if delim = line[0]; !isByte(delim, marks...) {
 		return 0, 0, nil
 	}
 
 	width++
-	tail = tail[1:]
+	tail = line[1:]
 	for {
 		if len(tail) == 0 {
 			return delim, width, tail
@@ -456,12 +451,29 @@ func isByte(b byte, any ...byte) bool {
 	return false
 }
 
+func trimNewline(line []byte) []byte {
+	i := len(line) - 1
+	if i < 0 {
+		return line
+	}
+	for i >= 0 {
+		switch line[i] {
+		case '\r', '\n':
+			i--
+		default:
+			return line[:i+1]
+		}
+	}
+	return line[:0]
+}
+
 func trimIndent(line []byte, prior, limit int) (n int, tail []byte) {
 	for tail = line; n < limit && len(tail) > 0; tail = tail[1:] {
 		if c := tail[0]; c == ' ' {
 			n++
 		} else if c == '\t' {
 			if m := n + 4 - prior; m > limit {
+				// TODO ability to split the tab, and return "tail with remaining indent"
 				return n, tail
 			} else if m == limit {
 				return m, tail
@@ -547,6 +559,8 @@ func (t BlockType) Format(f fmt.State, _ rune) {
 	switch t {
 	case noBlock:
 		io.WriteString(f, "None")
+	case blank:
+		io.WriteString(f, "Blank")
 	case Document:
 		io.WriteString(f, "Document")
 	case Heading:
