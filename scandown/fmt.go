@@ -45,41 +45,30 @@ func (blocks BlockStack) Format(f fmt.State, _ rune) {
 // fmt.Printf display. Produces a verbose "Type attr=value" form when
 // formatted with `%+v", a terse "Type" form otherwise.
 func (b Block) Format(f fmt.State, _ rune) {
-	if f.Flag('+') {
-		switch b.Type {
-		case Heading:
-			fmt.Fprintf(f, "%v delim=%q level=%v", b.Type, b.Delim, b.Width)
-
-		case Ruler:
-			fmt.Fprintf(f, "%v delim=%q width=%v", b.Type, b.Delim, b.Width)
-
-		case List:
-			switch b.Delim {
-			case '.', ')':
-				fmt.Fprintf(f, "OrderedList delim=%q", b.Delim)
-			default:
-				fmt.Fprintf(f, "List delim=%q", b.Delim)
-			}
-
-		case Item, Codefence, Blockquote:
-			fmt.Fprintf(f, "%v delim=%q width=%v", b.Type, b.Delim, b.Width)
-
+	width := b.Width
+	switch b.Type {
+	case Heading:
+		fmt.Fprintf(f, "%v%v", b.Type, width)
+		width = 0
+	case List:
+		switch b.Delim {
+		case '.', ')':
+			io.WriteString(f, "OrderedList")
 		default:
-			fmt.Fprintf(f, "%v", b.Type)
+			io.WriteString(f, "List")
 		}
-	} else {
-		switch b.Type {
-		case Heading:
-			fmt.Fprintf(f, "%v%v", b.Type, b.Width)
-		case List:
-			switch b.Delim {
-			case '.', ')':
-				io.WriteString(f, "OrderedList")
-			default:
-				io.WriteString(f, "List")
-			}
-		default:
-			fmt.Fprint(f, b.Type)
+	default:
+		fmt.Fprint(f, b.Type)
+	}
+	if f.Flag('+') {
+		if d := b.Delim; d != 0 {
+			fmt.Fprintf(f, " delim=%q", d)
+		}
+		if width != 0 {
+			fmt.Fprintf(f, " width=%v", width)
+		}
+		if in := b.Indent; in != 0 {
+			fmt.Fprintf(f, " indent=%v", in)
 		}
 	}
 }
