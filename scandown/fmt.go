@@ -9,30 +9,29 @@ import (
 // fmt.Printf display. Produces a multi-line verbose form when formatted with
 // `%+v".
 func (blocks BlockStack) Format(f fmt.State, _ rune) {
+	if len(blocks.offset) == 0 {
+		io.WriteString(f, "-- empty --")
+		return
+	}
+	fmt.Fprintf(f, "@%v", -(blocks.offset[0] + 1))
 	if f.Flag('+') {
-		for i, offset := range blocks.offset {
-			if i > 0 {
-				io.WriteString(f, "\n")
-			}
+		for i := 1; i < len(blocks.offset); i++ {
+			offset := blocks.offset[i]
+			io.WriteString(f, "\n")
 			if i >= len(blocks.id) {
-				fmt.Fprintf(f, "%v. pending scan advance: %v", i+1, offset)
-			} else if i == 0 {
-				offset = -(offset + 1)
-				fmt.Fprintf(f, "1. #%v %+v %v bytes scanned", blocks.id[i], blocks.block[i], offset)
+				fmt.Fprintf(f, "%v. pending scan advance: %v", i, offset)
+			} else if offset < 0 {
+				fmt.Fprintf(f, "%v. <%+v id=%v>", i, blocks.block[i], blocks.id[i])
 			} else {
-				offset = offset - blocks.offset[0]
-				fmt.Fprintf(f, "%v. @%v #%v %+v", i+1, offset, blocks.id[i], blocks.block[i])
+				fmt.Fprintf(f, "%v. </%+v id=%v>", i, blocks.block[i], blocks.id[i])
 			}
 		}
 	} else {
-		for i, offset := range blocks.offset {
-			if i > 0 {
-				io.WriteString(f, " ")
-			}
+		for i := 1; i < len(blocks.offset); i++ {
+			offset := blocks.offset[i]
+			io.WriteString(f, " ")
 			if i >= len(blocks.id) {
 				fmt.Fprintf(f, "+%v", offset)
-			} else if i == 0 && offset < 0 {
-				fmt.Fprintf(f, "@%v %v#%v", -(offset + 1), blocks.block[i], blocks.id[i])
 			} else if offset < 0 {
 				fmt.Fprintf(f, "%v#%v", blocks.block[i], blocks.id[i])
 			} else {
@@ -43,25 +42,30 @@ func (blocks BlockStack) Format(f fmt.State, _ rune) {
 }
 
 // Format writes a textual representation of the receiver, providing improved
-// fmt.Printf display. Produces a verbose "<Type attr=value>" form when
+// fmt.Printf display. Produces a verbose "Type attr=value" form when
 // formatted with `%+v", a terse "Type" form otherwise.
 func (b Block) Format(f fmt.State, _ rune) {
 	if f.Flag('+') {
 		switch b.Type {
 		case Heading:
-			fmt.Fprintf(f, "<%v delim=%q level=%v>", b.Type, b.Delim, b.Width)
+			fmt.Fprintf(f, "%v delim=%q level=%v", b.Type, b.Delim, b.Width)
 
 		case Ruler:
-			fmt.Fprintf(f, "<%v delim=%q width=%v>", b.Type, b.Delim, b.Width)
+			fmt.Fprintf(f, "%v delim=%q width=%v", b.Type, b.Delim, b.Width)
 
 		case List:
-			fmt.Fprintf(f, "<%v delim=%q>", b.Type, b.Delim)
+			switch b.Delim {
+			case '.', ')':
+				fmt.Fprintf(f, "OrderedList delim=%q", b.Delim)
+			default:
+				fmt.Fprintf(f, "List delim=%q", b.Delim)
+			}
 
 		case Item, Codefence, Blockquote:
-			fmt.Fprintf(f, "<%v delim=%q width=%v>", b.Type, b.Delim, b.Width)
+			fmt.Fprintf(f, "%v delim=%q width=%v", b.Type, b.Delim, b.Width)
 
 		default:
-			fmt.Fprintf(f, "<%v>", b.Type)
+			fmt.Fprintf(f, "%v", b.Type)
 		}
 	} else {
 		switch b.Type {
