@@ -10,7 +10,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/jcorbin/soc/internal/scandown"
+	"github.com/jcorbin/soc/scandown"
 	"github.com/jcorbin/soc/internal/socutil"
 )
 

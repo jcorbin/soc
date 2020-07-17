@@ -7,7 +7,7 @@ unimpressed with the non-spec status of blackfriday, and the awkward API of
 goldmark. Most (?all) of them expect an eagerly read byte slice, necessitating
 things like `ioutil.ReadAll`.
 
-Started implementing `internal/scandown` based around these points:
+Started implementing `scandown` based around these points:
 - Go's standard `bufio.Scanner` can be the basis of a full pull parser
 - direct implementation of [commonmark](https://spec.commonmark.org)
 - split into 2 halves along the lines of commonmark's 2-phase parsing strategy;
@@ -15,7 +15,7 @@ Started implementing `internal/scandown` based around these points:
   minimize resources spent parsing such
 
 The first half of `scandown` is now prototyped:
-- [`scandown.BlockStack.Scan()`](internal/scandown/block.go) implements a
+- [`scandown.BlockStack.Scan()`](scandown/block.go) implements a
   `bufio.SplitFunc`, allowing markdown block structure to be scanned from a
   stream. Memory overhead scales with document complexity ( deepest block
   structure ), but should feel constant in practice ( since most documents
@@ -50,7 +50,7 @@ Next up are two tracks in tandem:
 
 ## WIP
 
-- internal/scandown 
+- scandown 
   - laminated block parsing in documentation now that it Works ™
   - ... continue to clarify / refactor BlockStack core logic
   - continuing verification, maybe proper testing Soon ™
@@ -60,7 +60,7 @@ Next up are two tracks in tandem:
 
 # 2020-07-16
 
-- internal/scandown BlockStack Works™ ( for me, in one-off verification )
+- scandown BlockStack Works™ ( for me, in one-off verification )
   - enough to unblock prototyping a soc outline scanner and maybe transforms
   - enough to start work on markdown phase 2 inline parsing
 
@@ -115,7 +115,7 @@ Test
 ===
 
 This section contains sample markdown text to serve as a test case for
-`internal/scandown` and `"cmd/poc".markdownWriter`.
+`scandown` and `"cmd/poc".markdownWriter`.
 
 Because reasons
 
