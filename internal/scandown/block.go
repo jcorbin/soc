@@ -457,7 +457,7 @@ func ordinal(line []byte) (delim byte, width int, tail []byte) {
 			width++
 			tail = tail[1:]
 			continue
-		default:
+		case '.', ')':
 			delim = c
 			tail = tail[1:]
 		}
@@ -466,6 +466,7 @@ func ordinal(line []byte) (delim byte, width int, tail []byte) {
 	if delim == 0 || width < 1 {
 		return 0, 0, nil
 	}
+	width++
 	return delim, width, tail
 }
 
