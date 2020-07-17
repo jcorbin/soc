@@ -463,7 +463,7 @@ func ordinal(line []byte) (delim byte, width int, tail []byte) {
 		}
 		break
 	}
-	if delim == 0 || width < 1 {
+	if delim == 0 || width < 1 || width > 9 {
 		return 0, 0, nil
 	}
 	width++
