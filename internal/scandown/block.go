@@ -244,9 +244,10 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 
 			case Item:
 				// list items are continued when opened and by sufficient indent
+				hi := prior.Indent + prior.Width
 				if offset := sol + blocks.offset[priori]; offset == -1 {
-					tail = tail[prior.Width:] // newly opened
-				} else if indent, cont := trimIndent(tail, 0, prior.Indent); len(cont) > 0 && indent < prior.Indent {
+					tail = tail[hi:] // newly opened
+				} else if indent, cont := trimIndent(tail, 0, hi); len(cont) > 0 && indent < hi {
 					break matchPrior
 				} else {
 					tail = cont
@@ -294,7 +295,7 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 				if prior.Type != List {
 					opened = Block{List, delim, 0, 0}
 				} else {
-					opened = Block{Item, delim, width, indent + width}
+					opened = Block{Item, delim, width, indent}
 				}
 			} else if prior.Type == Paragraph {
 				priori++
