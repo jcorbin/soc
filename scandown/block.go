@@ -225,20 +225,11 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 			case List:
 				// lists are continued, after open, by sibling items or terminated by a differing delimiter
 				// otherwise continuation is handled by the next ( Item ) stack entry
-
 				if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
-					if delim, _, cont := listMarker(cont); delim != 0 {
-						if delim == prior.Delim {
-							// TODO seems too hacky
-							if priori++; priori < len(blocks.offset) {
-								if offset := sol + blocks.offset[priori]; offset == -1 {
-									tail = cont
-									priori++
-									continue matchPrior
-								}
-							}
+					if delim, _, _ := listMarker(cont); delim != 0 {
+						if delim != prior.Delim {
+							break matchPrior
 						}
-						break matchPrior
 					}
 				}
 
