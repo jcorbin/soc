@@ -225,10 +225,18 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 			case List:
 				// lists are continued, after open, by sibling items or terminated by a differing delimiter
 				// otherwise continuation is handled by the next ( Item ) stack entry
-				if _, cont := trimIndent(tail, 0, 3); len(cont) > 0 {
-					if delim, _, _ := listMarker(cont); delim != 0 {
-						if delim != prior.Delim {
-							break matchPrior
+				if hi := prior.Indent + prior.Width; hi > 0 {
+					if in, cont := trimIndent(tail, 0, hi); in < hi && len(cont) > 0 {
+						if delim, _, _ := listMarker(cont); delim != 0 {
+							if delim != prior.Delim {
+								break matchPrior
+							}
+							if nexti := priori + 1; nexti < len(blocks.offset) {
+								if offset := sol + blocks.offset[nexti]; offset != -1 {
+									priori = nexti
+									break matchPrior
+								}
+							}
 						}
 					}
 				}
@@ -324,6 +332,12 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 		}
 
 		// finally ready to open a block, returning any container open token
+		if opened.Type == Item {
+			// update parent list indent
+			prior.Width = opened.Width
+			prior.Indent = opened.Indent
+			blocks.block[len(blocks.block)-1] = prior
+		}
 		if i := len(blocks.id); i < len(blocks.offset) {
 			blocks.offset[i] = end
 		} else {
