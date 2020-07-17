@@ -5,11 +5,62 @@ import (
 	"fmt"
 )
 
+// BlockStack tracks state for Phase 1 parsing of Markdown block structure
+// along the lines of the commonmark spec parsing strategy. It is logically a
+// stack of open Block data, along with unique block IDs, and offsets
+// within the scanned byte stream.
+//
+// It is not safe to use BlockStack from parallel goroutines, as its primary
+// use case is within a synchronous bufio.Scanner loop.
+//
+// Minimal usage example:
+// 	var blocks scandown.BlockStack
+// 	sc := bufio.NewScanner(os.Stdin)
+// 	sc.Split(blocks.Scan)
+// 	for sc.Scan() {
+// 		fmt.Printf("scanned %v %q\n", blocks, sc.Bytes())
+// 	}
+type BlockStack struct {
+	offset []int   // within current scan window
+	block  []Block // block info
+	id     []int   // block id
+	nextID int     // next block id
+}
+
+// Block represents some piece of parsed Markdown block structure.
+type Block struct {
+	Type BlockType
+
+	// Delim may contain a delimiter byte:
+	// - Heading: '#', '=', or '-'
+	// - Ruler: '-','_', or '*'
+	// - Blockquote: '>''
+	// - List/Item: '-', '*', '+', ')', or '.'
+	// - Codefence: '`' or '~'
+	Delim byte
+
+	// Width may contain a mark width:
+	// - Heading: the header level
+	// - Ruler: counts how many rule bytes, including any spaces between
+	// - Blockquote: width of the quote marker, including any following spaces
+	// - Item: width of the list item marker, including any following spaces
+	// - Codefence: counts how many fence Delim bytes were used
+	Width int
+
+	// Indent tracks how far the block was indented, uses:
+	// - Item: to recognize hanging indent (along with Width) and trim content
+	// - Codefence: to trim following content
+	// - Codeblock: to recognize block end, and trim content
+	Indent int
+}
+
+// BlockType is to determine the semantic meaning of a Block.
 type BlockType int
 
+// BlockType constants for the core commonmark structures.
 const (
-	noBlock BlockType = iota
-	blank
+	noBlock BlockType = iota // 0 value should never be seen by user
+	blank                    // internal value should never be seen by user
 	Document
 	Heading
 	Ruler
@@ -19,23 +70,26 @@ const (
 	Paragraph
 	Codefence
 	Codeblock
-	HTMLBlock // TODO
+	HTMLBlock // TODO not yet supported by BlockStack
+
+	// TODO it would be nice to support extensions like tables and definition lists
 )
 
-type Block struct {
-	Type   BlockType
-	Delim  byte
-	Width  int
-	Indent int
-}
-
-type BlockStack struct {
-	offset []int   // within current scan window
-	block  []Block // block kind (type, delim, width)
-	id     []int   // block id
-	nextID int     // next block id
-}
-
+// Scan consumes lines (explicitly terminated) from the data buffer, matching
+// against and updating the receiver block stack state. If atEOF is true, it
+// also consumes a final unterminated line, and then closes any open blocks.
+//
+// The returned advance is how many prefix data bytes MUST be discarded before
+// the next Scan. This prefix MAY ( but does not currently ) include any token
+// bytes.
+//
+// The returned token MAY be a window within data, so must not be retained
+// between calls to Scan, and becomes invalid once the caller advance-s data.
+//
+// Any non-nil error returned SHOULD cause the caller to halt its scan loop,
+// and not not call Scan again.
+//
+// In other words, it implements a bufio.SplitFunc to tokenize input.
 func (blocks *BlockStack) Scan(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// decrement block offsets by final advance
 	defer func() {
@@ -304,6 +358,8 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 	}
 }
 
+// Offset returns the current scanned stream offset, where the currently
+// scanned token starts.
 func (blocks *BlockStack) Offset() (n int) {
 	// the Document node tracks total stream offset
 	if len(blocks.block) > 0 && blocks.block[0].Type == Document {
@@ -320,16 +376,21 @@ func (blocks *BlockStack) Offset() (n int) {
 	return n
 }
 
-func (blocks *BlockStack) Head() (id int, b Block, open bool) {
-	return blocks.Block(len(blocks.id) - 1)
-}
-
+// Len returns how many blocks are currently on the stack.
 func (blocks *BlockStack) Len() int {
 	return len(blocks.id)
 }
 
+// Block returns the data for a single block on the stack, including a unique
+// id number, Block definition data, and whether the block is still open
+// (true), or has been closed (false). Panics if i >= Len().
 func (blocks *BlockStack) Block(i int) (id int, b Block, open bool) {
 	return blocks.id[i], blocks.block[i], blocks.offset[i] < 0
+}
+
+// Head is a convenience for Block(Len()-1).
+func (blocks *BlockStack) Head() (id int, b Block, open bool) {
+	return blocks.Block(len(blocks.id) - 1)
 }
 
 func isContainer(t BlockType) bool {
