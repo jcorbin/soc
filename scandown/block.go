@@ -1,5 +1,7 @@
 package scandown
 
+// TODO proper handling of virtual space, esp wrt tabs after {list,quote}Marker
+
 import (
 	"bytes"
 	"fmt"
@@ -410,7 +412,8 @@ func isContainer(t BlockType) bool {
 
 func quoteMarker(line []byte) (delim byte, width int, cont []byte) {
 	if delim, width, tail := delimiter(line, 3, '>'); delim != 0 {
-		if in, cont := trimIndent(tail, 1, 3); in > 0 || len(cont) == 0 {
+		// TODO this wants to be able to consume a single virtual space from a tab, passing any remainder
+		if in, cont := trimIndent(tail, 1, 1); in > 0 || len(cont) == 0 {
 			return delim, width + in, cont
 		}
 	}
@@ -423,7 +426,8 @@ func listMarker(line []byte) (delim byte, width int, cont []byte) {
 		delim, width, tail = ordinal(line)
 	}
 	if delim != 0 {
-		if in, cont := trimIndent(tail, 1, 3); in > 0 || len(cont) == 0 {
+		// TODO this wants to be able to consume a single virtual space from a tab, passing any remainder
+		if in, cont := trimIndent(tail, 1, 1); in > 0 || len(cont) == 0 {
 			return delim, width + in, cont
 		}
 	}
