@@ -90,7 +90,7 @@ func (ew *ErrWriter) Write(p []byte) (n int, err error) {
 // The caller SHOULD close it if they care to flush any partial final line.
 func PrefixWriter(prefix string, w io.Writer) *Prefixer {
 	var p Prefixer
-	p.buf.To = w
+	p.Buffer.To = w
 	p.Prefix = prefix
 	return &p
 }
@@ -101,14 +101,14 @@ func PrefixWriter(prefix string, w io.Writer) *Prefixer {
 type Prefixer struct {
 	Prefix string
 	Skip   bool
-	buf    WriteBuffer
+	Buffer WriteBuffer
 }
 
 // Close flushes all internally buffered bytes to the underlying writer.
-func (p *Prefixer) Close() error { return p.buf.Flush() }
+func (p *Prefixer) Close() error { return p.Buffer.Flush() }
 
 // Flush flushes all internally buffered bytes to the underlying writer.
-func (p *Prefixer) Flush() error { return p.buf.Flush() }
+func (p *Prefixer) Flush() error { return p.Buffer.Flush() }
 
 // Write writes bytes to the internal buffer, inserting Prefix before every
 // line, and then flushes all complete lines to the underlying writer.
@@ -117,7 +117,7 @@ func (p *Prefixer) Write(b []byte) (n int, err error) {
 	for len(b) > 0 {
 		if !first {
 			p.addPrefix()
-		} else if i := p.buf.Len() - 1; i < 0 || p.buf.Bytes()[i] == '\n' {
+		} else if i := p.Buffer.Len() - 1; i < 0 || p.Buffer.Bytes()[i] == '\n' {
 			p.addPrefix()
 			first = false
 		} else {
@@ -132,10 +132,10 @@ func (p *Prefixer) Write(b []byte) (n int, err error) {
 		} else {
 			b = nil
 		}
-		m, _ := p.buf.Write(line)
+		m, _ := p.Buffer.Write(line)
 		n += m
 	}
-	return n, p.buf.MaybeFlush()
+	return n, p.Buffer.MaybeFlush()
 }
 
 // WriteString writes a string to the internal buffer, inserting Prefix before
@@ -145,7 +145,7 @@ func (p *Prefixer) WriteString(s string) (n int, err error) {
 	for len(s) > 0 {
 		if !first {
 			p.addPrefix()
-		} else if i := p.buf.Len() - 1; i < 0 || p.buf.Bytes()[i] == '\n' {
+		} else if i := p.Buffer.Len() - 1; i < 0 || p.Buffer.Bytes()[i] == '\n' {
 			p.addPrefix()
 			first = false
 		} else {
@@ -160,17 +160,17 @@ func (p *Prefixer) WriteString(s string) (n int, err error) {
 		} else {
 			s = ""
 		}
-		m, _ := p.buf.WriteString(line)
+		m, _ := p.Buffer.WriteString(line)
 		n += m
 	}
-	return n, p.buf.MaybeFlush()
+	return n, p.Buffer.MaybeFlush()
 }
 
 func (p *Prefixer) addPrefix() {
 	if p.Skip {
 		p.Skip = false
 	} else {
-		p.buf.WriteString(p.Prefix)
+		p.Buffer.WriteString(p.Prefix)
 	}
 }
 
