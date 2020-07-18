@@ -1,6 +1,7 @@
 package scandown
 
 // TODO proper handling of virtual space, esp wrt tabs after {list,quote}Marker
+// TODO CRLF handling probably needs improvement
 
 import (
 	"bytes"
