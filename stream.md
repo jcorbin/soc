@@ -47,13 +47,18 @@ Next up are two tracks in tandem:
 - movement
 - matching: move/elaborate, add/copy
 - v0 command architecture, built from poc pieces and scandown
+- scandown
+  - write a package level readme and/or doc.go
+  - unit test for BlockStack.Seek
+  - see `block.go` for more TODOs
+  - Inline parsing
+  - Commonmark spec conformance tests
 
 ## WIP
 
 - scandown 
   - ... continue to clarify / refactor BlockStack core logic
   - continuing verification, maybe proper testing Soon ™
-  - start to implement phase 2 inline parsing
 
 ## Done
 
