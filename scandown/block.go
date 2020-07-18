@@ -417,7 +417,11 @@ func quoteMarker(line []byte) (delim byte, width int, cont []byte) {
 func listMarker(line []byte) (delim byte, width int, cont []byte) {
 	delim, width, tail := delimiter(line, 1, '-', '*', '+')
 	if delim == 0 {
-		delim, width, tail = ordinal(line)
+		if width, tail = ordinal(line); len(tail) > 0 {
+			var dw int
+			delim, dw, tail = delimiter(tail, 1, '.', ')')
+			width += dw
+		}
 	}
 	if delim != 0 {
 		// TODO this wants to be able to consume a single virtual space from a tab, passing any remainder
@@ -453,7 +457,7 @@ func delimiter(line []byte, maxWidth int, marks ...byte) (delim byte, width int,
 	}
 }
 
-func ordinal(line []byte) (delim byte, width int, tail []byte) {
+func ordinal(line []byte) (width int, tail []byte) {
 	tail = line
 	for len(tail) > 0 {
 		switch c := tail[0]; c {
@@ -461,17 +465,13 @@ func ordinal(line []byte) (delim byte, width int, tail []byte) {
 			width++
 			tail = tail[1:]
 			continue
-		case '.', ')':
-			delim = c
-			tail = tail[1:]
 		}
 		break
 	}
-	if delim == 0 || width < 1 || width > 9 {
-		return 0, 0, nil
+	if width < 1 || width > 9 {
+		return 0, nil
 	}
-	width++
-	return delim, width, tail
+	return width, tail
 }
 
 func fence(line []byte, min int, marks ...byte) (fence byte, width int, tail []byte) {
