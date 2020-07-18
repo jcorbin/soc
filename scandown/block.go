@@ -415,7 +415,7 @@ func quoteMarker(line []byte) (delim byte, width int, cont []byte) {
 }
 
 func listMarker(line []byte) (delim byte, width int, cont []byte) {
-	delim, width, tail := delimiter(line, 3, '-', '*', '+')
+	delim, width, tail := delimiter(line, 1, '-', '*', '+')
 	if delim == 0 {
 		delim, width, tail = ordinal(line)
 	}
