@@ -500,6 +500,9 @@ func ruler(line []byte, marks ...byte) (rule byte, width int, tail []byte) {
 	for width++; width < len(line); width++ {
 		switch line[width] {
 		case rule, ' ', '\t':
+		case '\n':
+			width--
+			return rule, width, line[width:]
 		default:
 			return 0, 0, nil
 		}
