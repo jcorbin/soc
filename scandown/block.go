@@ -62,7 +62,7 @@ type BlockType int
 // BlockType constants for the core commonmark structures.
 const (
 	noBlock BlockType = iota // 0 value should never be seen by user
-	blank                    // internal value should never be seen by user
+	Blank
 	Document
 	Heading
 	Ruler
@@ -180,7 +180,7 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 			case Document:
 				// any line continues the document
 
-			case blank:
+			case Blank:
 				// blank line runs are continued only by blank lines short
 				// enough to not open an indented codeblock
 				if indent, cont := trimIndent(tail, 0, 4); indent == 4 || len(cont) > 0 {
@@ -275,7 +275,7 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 			if prior.Type != Paragraph && indent == 4 {
 				opened = Block{Codeblock, 0, 0, indent}
 			} else if len(bytes.TrimSpace(cont)) == 0 {
-				opened = Block{blank, 0, 0, 0}
+				opened = Block{Blank, 0, 0, 0}
 			} else if delim, _, _ := ruler(cont, '=', '-'); prior.Type == Paragraph && delim != 0 {
 				opened = Block{Heading, delim, 1, indent}
 				if delim == '-' {
@@ -308,7 +308,7 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 		}
 
 		// TODO seems a bit hacky
-		if priori == len(blocks.id) && prior.Type == List && opened.Type != Item && opened.Type != blank {
+		if priori == len(blocks.id) && prior.Type == List && opened.Type != Item && opened.Type != Blank {
 			priori--
 		}
 
@@ -317,13 +317,7 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 			if end < start {
 				end = sol
 			}
-			if prior.Type == blank {
-				blocks.offset = append(blocks.offset[:priori], end)
-				blocks.block = blocks.block[:priori]
-				blocks.id = blocks.id[:priori]
-			} else {
-				blocks.offset[len(blocks.offset)-1] = end
-			}
+			blocks.offset[len(blocks.offset)-1] = end
 			return
 		}
 

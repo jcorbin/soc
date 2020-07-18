@@ -78,7 +78,7 @@ func (t BlockType) Format(f fmt.State, _ rune) {
 	switch t {
 	case noBlock:
 		io.WriteString(f, "None")
-	case blank:
+	case Blank:
 		io.WriteString(f, "Blank")
 	case Document:
 		io.WriteString(f, "Document")
