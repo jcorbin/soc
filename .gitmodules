@@ -1,0 +1,3 @@
+[submodule "scandown/spec"]
+	path = scandown/spec
+	url = https://github.com/commonmark/commonmark-spec
