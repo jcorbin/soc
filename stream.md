@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-17
+# 2020-07-18
 
 ## TODO
 
@@ -51,12 +51,25 @@ Next up are two tracks in tandem:
 ## WIP
 
 - scandown 
-  - laminated block parsing in documentation now that it Works ™
   - ... continue to clarify / refactor BlockStack core logic
   - continuing verification, maybe proper testing Soon ™
   - start to implement phase 2 inline parsing
 
 ## Done
+
+- scandown
+  - wrote initial pass at block content trimming; BlockStack is now Just A Reader ™
+
+# 2020-07-17
+
+- broke out a readme, cleaned up the stream, and push to github
+- scandown
+  - de-interned so that it can be used from go playground
+  - wrote a [playground example](https://play.golang.org/p/dBrrhPHpKWN)
+    demonstrating block stack scanning
+  - ratcheted up code documentation for initial publishing
+  - fixed many bugs, and otherwise improved code while writing docs and
+    examples
 
 # 2020-07-16
 
