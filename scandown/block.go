@@ -2,10 +2,14 @@ package scandown
 
 // TODO proper handling of virtual space, esp wrt tabs after {list,quote}Marker
 // TODO CRLF handling probably needs improvement
+// TODO BlockStack.Seek really needs a dedicated test
+// TODO setext header content should have trailing space trimmed
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 )
 
 // BlockStack tracks state for Phase 1 parsing of Markdown block structure
@@ -13,21 +17,30 @@ import (
 // stack of open Block data, along with unique block IDs, and offsets
 // within the scanned byte stream.
 //
-// It is not safe to use BlockStack from parallel goroutines, as its primary
-// use case is within a synchronous bufio.Scanner loop.
+// BlockStack implements both a bufio.SplitFunc to tokenize block content, and
+// an io.ReadSeeker to read block content between scans.
 //
-// Minimal usage example:
+// Example usage:
 // 	var blocks scandown.BlockStack
 // 	sc := bufio.NewScanner(os.Stdin)
 // 	sc.Split(blocks.Scan)
 // 	for sc.Scan() {
-// 		fmt.Printf("scanned %v %q\n", blocks, sc.Bytes())
+// 		content, _ := ioutil.ReadAll(&blocks)
+// 		fmt.Printf("scanned %v %q\n", blocks, content)
 // 	}
+//
+// It is not safe to use BlockStack from parallel goroutines, as its primary
+// use case is within a synchronous bufio.Scanner loop, as exemplified above.
 type BlockStack struct {
 	offset []int   // within current scan window
 	block  []Block // block info
 	id     []int   // block id
 	nextID int     // next block id
+
+	body  []byte // current block body; token retained by Scan
+	read  []byte // remnant body bytes for Read()
+	line  []byte // remnant body line bytes for Read()
+	readn int64  // virtual body read offset ( see Seek )
 }
 
 // Block represents some piece of parsed Markdown block structure.
@@ -78,9 +91,14 @@ const (
 	// TODO it would be nice to support extensions like tables and definition lists
 )
 
-// Scan consumes lines (explicitly terminated) from the data buffer, matching
+// Scan implements a bufio.SplitFunc that tokenizes Markdown block structure.
+//
+// It consumes lines (explicitly terminated) from the data buffer, matching
 // against and updating the receiver block stack state. If atEOF is true, it
 // also consumes a final unterminated line, and then closes any open blocks.
+//
+// Any non-nil error returned SHOULD cause the caller to halt its scan loop,
+// and not not call Scan again.
 //
 // The returned advance is how many prefix data bytes MUST be discarded before
 // the next Scan. This prefix MAY ( but does not currently ) include any token
@@ -89,11 +107,17 @@ const (
 // The returned token MAY be a window within data, so must not be retained
 // between calls to Scan, and becomes invalid once the caller advance-s data.
 //
-// Any non-nil error returned SHOULD cause the caller to halt its scan loop,
-// and not not call Scan again.
-//
-// In other words, it implements a bufio.SplitFunc to tokenize input.
+// The returned token is also retained so that trimmed block content may be
+// Read() out, until next scan.
 func (blocks *BlockStack) Scan(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	// initialize body Read() state on the way out
+	defer func() {
+		blocks.body = token
+		blocks.read = token
+		blocks.line = nil
+		blocks.readn = 0
+	}()
+
 	// decrement block offsets by final advance
 	defer func() {
 		if advance > 0 {
@@ -359,6 +383,243 @@ consumeLine: // labeled to clarify `continue` sites, some hundreds of lines henc
 
 		// continue consumeLine // implicit since this is loop tail
 	}
+}
+
+// Read implements io.Reader over the content bytes of the last scanned token.
+//
+// See Scan for details and an example.
+func (blocks *BlockStack) Read(p []byte) (n int, err error) {
+	blocks.read, blocks.line, n = copyBlockContent(blocks.block, blocks.read, blocks.line, p)
+	if len(blocks.read) == 0 {
+		err = io.EOF
+	}
+	blocks.readn += int64(n)
+	return n, err
+}
+
+// Seek implements io.Seeker over the content bytes of the last scanned token.
+//
+// See Scan for details and an example.
+func (blocks *BlockStack) Seek(offset int64, whence int) (int64, error) {
+	switch whence {
+
+	case io.SeekCurrent:
+		if offset == 0 {
+			return blocks.readn, nil
+		}
+
+	case io.SeekEnd:
+		blocks.skip(int64(len(blocks.line) + len(blocks.read)))
+		offset = -offset
+
+	case io.SeekStart:
+		// restarts are easy
+		if offset == 0 {
+			blocks.read = blocks.body
+			blocks.line = nil
+			blocks.readn = 0
+			return 0, nil
+		}
+		offset -= blocks.readn
+
+	default:
+		return 0, errors.New("invalid seek whence") // TODO standard error?
+	}
+
+	// startover to go back
+	if offset < 0 {
+		to := offset + blocks.readn
+		if to < 0 {
+			return 0, errors.New("seek offset out of range") // TODO standard error?
+		}
+		blocks.read = blocks.body
+		blocks.line = nil
+		offset = to
+	}
+
+	// no change
+	if offset == 0 {
+		return blocks.readn, nil
+	}
+
+	// skip forward
+	if blocks.skip(offset) != offset {
+		return 0, errors.New("seek offset out of range") // TODO standard error?
+	}
+	return offset, nil
+}
+
+// TODO may be a hint for a better receiver type scope wrt []Block functions below
+func (blocks *BlockStack) skip(max int64) (skipped int64) {
+	blocks.read, blocks.line, skipped = skipBlockContent(blocks.block, blocks.read, blocks.line, max)
+	blocks.readn += skipped
+	return skipped
+}
+
+// TODO maybe receive on some type T []Block
+func copyBlockContent(blocks []Block, token, line, dst []byte) (remToken, remLine []byte, n int) {
+	// TODO try to unify with skipBlockContent
+	head := blocks[len(blocks)-1]
+	if head.Type == Blank {
+		return nil, nil, 0
+	}
+	for {
+		if len(line) > 0 {
+			cn := copy(dst, line)
+			line = line[cn:]
+			switch head.Type {
+			case Heading, Paragraph:
+				cn = coalesceSpace(dst, dst[:cn])
+				if pn := cn - 1; len(token) == 0 && pn >= 0 && dst[pn] == ' ' {
+					// trim a trailing space
+					cn = pn
+				}
+			}
+			n += cn
+			dst = dst[cn:]
+		}
+		if len(token) == 0 || len(dst) == 0 {
+			break
+		}
+		token, line = nextBlockLine(blocks, token)
+	}
+	return token, line, n
+}
+
+// TODO maybe receive on some type T []Block
+func skipBlockContent(blocks []Block, token, line []byte, skip int64) (remToken, remLine []byte, n int64) {
+	// TODO try to unify with copyBlockContent
+	head := blocks[len(blocks)-1]
+	if head.Type == Blank {
+		return nil, nil, 0
+	}
+	for {
+		if ln := int64(len(line)); ln > 0 {
+			if ln > skip {
+				ln = skip
+			}
+			nextLine := line[ln:]
+			switch head.Type {
+			case Heading, Paragraph:
+				sn := coalesceSpace(nil, line[:ln])
+				if pn := ln - 1; len(token) == 0 && pn >= 0 && line[pn] == ' ' {
+					// trim a trailing space
+					sn--
+				}
+			}
+			n += ln
+			skip -= ln
+			line = nextLine
+		}
+		if len(token) == 0 || skip <= 0 {
+			break
+		}
+		token, line = nextBlockLine(blocks, token)
+	}
+	return token, line, n
+}
+
+// TODO maybe receive on some type T []Block
+func nextBlockLine(blocks []Block, token []byte) (remToken, nextLine []byte) {
+	line := token
+	if eol := bytes.IndexByte(line, '\n'); eol < 0 {
+		token = nil
+	} else {
+		eol++
+		line = line[:eol]
+		token = token[eol:]
+	}
+	return token, trimBlockLine(blocks, line)
+}
+
+// TODO maybe receive on some type T []Block
+func trimBlockLine(blocks []Block, line []byte) []byte {
+	for _, b := range blocks {
+		switch b.Type {
+
+		case Blockquote:
+			_, line = trimIndent(line, 0, 3)
+			_, _, line = delimiter(line, 1, b.Delim)
+			_, line = trimIndent(line, 1, 1)
+
+		case Item:
+			hi := b.Indent + b.Width
+			var in int
+			in, line = trimIndent(line, 0, hi)
+			if in < hi {
+				// TODO do we need to receive state to enforce only first-line delimiter?
+				tail := line
+				d := b.Delim
+				switch d {
+				case ')', '.':
+					_, tail = ordinal(tail)
+				}
+				rd, _, tail := delimiter(tail, 1, d)
+				_, tail = trimIndent(tail, 1, 1)
+				if rd != 0 {
+					line = tail
+				}
+			}
+
+		case Ruler:
+			if d, _, _ := ruler(line, b.Delim); d != 0 {
+				return nil
+			}
+
+		case Heading:
+			switch d := b.Delim; d {
+			case '#':
+				_, _, line = delimiter(line, b.Width, '#')
+			case '=', '-':
+				// TODO should we enforce last line only if we receive that state?
+				if rd, _, _ := ruler(line, d); rd != 0 {
+					return nil
+				}
+			}
+			fallthrough
+
+		case Blank, Paragraph:
+			_, line = trimIndent(line, 0, len(line))
+
+		case Codefence:
+			// TODO should we leverage first/last line knowledge if we receive it?
+			_, line = trimIndent(line, 0, b.Indent)
+			if _, cont := trimIndent(line, 0, 3); len(cont) > 0 {
+				if delim, _, _ := fence(cont, b.Width, b.Delim); delim != 0 {
+					return nil
+				}
+			}
+
+		case Codeblock:
+			_, line = trimIndent(line, 0, b.Indent)
+
+		}
+	}
+	return line
+}
+
+func coalesceSpace(dst, src []byte) (n int) {
+	between := true
+	for _, c := range src {
+		switch c {
+		case '\r':
+		case '\t', '\n':
+			c = ' '
+			fallthrough
+		case ' ':
+			if between {
+				continue
+			}
+			between = true
+		default:
+			between = false
+		}
+		if dst != nil {
+			dst[n] = c
+		}
+		n++
+	}
+	return n
 }
 
 // Offset returns the current scanned stream offset, where the currently
