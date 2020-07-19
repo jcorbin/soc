@@ -23,20 +23,10 @@ import (
 // stack of open Block data, along with unique block IDs, and offsets
 // within the scanned byte stream.
 //
-// BlockStack implements both a bufio.SplitFunc to tokenize block content, and
-// an io.ReadSeeker to read block content between scans.
+// Scan() implements a bufio.SplitFunc tokenizer, while Read() and Seek()
+// implement and io.ReadSeeker over the last token's content bytes.
 //
-// Example usage:
-// 	var blocks scandown.BlockStack
-// 	sc := bufio.NewScanner(os.Stdin)
-// 	sc.Split(blocks.Scan)
-// 	for sc.Scan() {
-// 		content, _ := ioutil.ReadAll(&blocks)
-// 		fmt.Printf("scanned %v %q\n", blocks, content)
-// 	}
-//
-// It is not safe to use BlockStack from parallel goroutines, as its primary
-// use case is within a synchronous bufio.Scanner loop, as exemplified above.
+// It is not safe to use BlockStack from parallel goroutines.
 type BlockStack struct {
 	offset []int   // within current scan window
 	block  []Block // block info
@@ -109,10 +99,19 @@ const (
 // bytes.
 //
 // The returned token MAY be a window within data, so must not be retained
-// between calls to Scan, and becomes invalid once the caller advance-s data.
+// across calls to Scan, and becomes invalid once the caller advance-s data.
 //
-// The returned token is also retained so that trimmed block content may be
-// Read() out, until next scan.
+// Finally, Scan() resets Read() and Seek() state to extract content from the
+// returned token bytes.
+//
+// Example usage:
+// 	var blocks scandown.BlockStack
+// 	sc := bufio.NewScanner(os.Stdin)
+// 	sc.Split(blocks.Scan)
+// 	for sc.Scan() {
+// 		content, _ := ioutil.ReadAll(&blocks)
+// 		fmt.Printf("scanned %v %q\n", blocks, content)
+// 	}
 func (blocks *BlockStack) Scan(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// initialize body Read() state on the way out
 	defer func() {
