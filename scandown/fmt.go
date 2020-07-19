@@ -21,9 +21,9 @@ func (blocks BlockStack) Format(f fmt.State, _ rune) {
 			if i >= len(blocks.id) {
 				fmt.Fprintf(f, "%v. pending scan advance: %v", i, offset)
 			} else if offset < 0 {
-				fmt.Fprintf(f, "%v. <%+v id=%v>", i, blocks.block[i], blocks.id[i])
+				fmt.Fprintf(f, "%v. [%+v id=%v]", i, blocks.block[i], blocks.id[i])
 			} else {
-				fmt.Fprintf(f, "%v. </%+v id=%v>", i, blocks.block[i], blocks.id[i])
+				fmt.Fprintf(f, "%v. [%+v id=%v closed]", i, blocks.block[i], blocks.id[i])
 			}
 		}
 	} else {
