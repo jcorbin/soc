@@ -4,6 +4,12 @@ package scandown
 // TODO CRLF handling probably needs improvement
 // TODO BlockStack.Seek really needs a dedicated test
 // TODO setext header content should have trailing space trimmed
+// TODO support HTML block structure
+// TODO support block structure extensions, like tables and definition lists
+// TODO recognize reference link definitions... as blocks?
+// TODO implement hard line breaks, currently stripped by content reader
+// TODO should hard breaks in an atx heading continue it through the next line?
+// TODO fragment leaf tokens: will place an upper limit on setext header sizes
 
 import (
 	"bytes"
@@ -86,9 +92,7 @@ const (
 	Paragraph
 	Codefence
 	Codeblock
-	HTMLBlock // TODO not yet supported by BlockStack
-
-	// TODO it would be nice to support extensions like tables and definition lists
+	HTMLBlock
 )
 
 // Scan implements a bufio.SplitFunc that tokenizes Markdown block structure.

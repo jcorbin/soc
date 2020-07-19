@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-18
+# 2020-07-19
 
 ## TODO
 
@@ -53,17 +53,17 @@ Next up are two tracks in tandem:
   - see `block.go` for more TODOs
   - Inline parsing
   - Commonmark spec conformance tests
+  - continue to clarify / refactor BlockStack core logic
 
 ## WIP
 
-- scandown 
-  - ... continue to clarify / refactor BlockStack core logic
-  - continuing verification, maybe proper testing Soon ™
-
 ## Done
 
+# 2020-07-18
+
 - scandown
-  - wrote initial pass at block content trimming; BlockStack is now Just A Reader ™
+  - wrote initial pass at block content trimming; BlockStack is now also an
+    `io.Reader` and an `io.Seeker`
 
 # 2020-07-17
 
