@@ -24,26 +24,16 @@ var (
 	verbose bool
 
 	logOut  *socutil.Prefixer
+	outBuf  socutil.WriteBuffer
 	scanner *bufio.Scanner
 	blocks  scandown.BlockStack
 )
 
-func main() {
-	flag.Parse()
-
-	logOut = socutil.PrefixWriter("> log: ", out)
-	defer logOut.Close()
-	log.SetOutput(logOut)
-	log.SetFlags(0)
-
-	scanner = bufio.NewScanner(in)
-	scanner.Split(blocks.Scan)
+func scan() {
+	defer outBuf.Flush()
 
 	tokenCount := 0
-	if err := socutil.WriteLines(out, func(w io.Writer, _ func()) bool {
-		if !scanner.Scan() {
-			return false
-		}
+	for out.Err == nil && scanner.Scan() {
 
 		var body io.ReadSeeker = &blocks
 		if raw {
@@ -58,8 +48,8 @@ func main() {
 
 		if body != nil || blanks {
 			tokenCount++
-			width, _ := fmt.Fprintf(w, "%v. ", tokenCount)
-			itemOut := socutil.PrefixWriter(strings.Repeat(" ", width), w)
+			width, _ := fmt.Fprintf(&outBuf, "%v. ", tokenCount)
+			itemOut := socutil.PrefixWriter(strings.Repeat(" ", width), &outBuf)
 			itemOut.Skip = true
 			defer itemOut.Close()
 			defer addLogPrefix(itemOut.Prefix)()
@@ -87,10 +77,31 @@ func main() {
 				}
 			}
 		}
+		outBuf.MaybeFlush()
+	}
+}
 
-		return true
-	}); err != nil {
-		log.Fatalf("write error: %v", err)
+func main() {
+	// parse flags, then wire up input and output
+	flag.Parse()
+
+	logOut = socutil.PrefixWriter("> log: ", out)
+	defer logOut.Close()
+	log.SetOutput(logOut)
+	log.SetFlags(0)
+
+	outBuf.To = out
+
+	scanner = bufio.NewScanner(in)
+	scanner.Split(blocks.Scan)
+
+	// run the main scan loop
+	scan()
+
+	// handle any errors
+	if err := out.Err; err != nil {
+		fmt.Printf("# write error: %v", err)
+		os.Exit(1)
 	}
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("# main scan error\n%T: %v\n", err, err)
