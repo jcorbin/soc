@@ -80,9 +80,6 @@ func scan() {
 			io.Copy(pw, body)
 			pw.Close()
 		}
-		if b := itemOut.Buffer.Bytes(); len(b) > 0 && b[len(b)-1] != '\n' {
-			io.WriteString(itemOut, "\n")
-		}
 
 		// flush output, aligned to line boundaries
 		outBuf.MaybeFlush()

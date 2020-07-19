@@ -95,7 +95,7 @@ func PrefixWriter(prefix string, w io.Writer) *Prefixer {
 	return &p
 }
 
-// Prefixer supports writing a prefix before every line written to an underling writer.
+// Prefixer supports writing a prefix before every line written to an underlying writer.
 // Create with PrefixWriter().
 // Set Skip true for a one-shot "skip adding the next prefix".
 type Prefixer struct {
@@ -104,11 +104,17 @@ type Prefixer struct {
 	Buffer WriteBuffer
 }
 
-// Close flushes all internally buffered bytes to the underlying writer.
-func (p *Prefixer) Close() error { return p.Buffer.Flush() }
-
 // Flush flushes all internally buffered bytes to the underlying writer.
 func (p *Prefixer) Flush() error { return p.Buffer.Flush() }
+
+// Close ensures that a final newline has been written to Buffer buffer, then
+// flushes all internally buffered bytes to the underlying writer.
+func (p *Prefixer) Close() error {
+	if b := p.Buffer.Bytes(); len(b) > 0 && b[len(b)-1] != '\n' {
+		p.Buffer.WriteByte('\n')
+	}
+	return p.Buffer.Flush()
+}
 
 // Write writes bytes to the internal buffer, inserting Prefix before every
 // line, and then flushes all complete lines to the underlying writer.
