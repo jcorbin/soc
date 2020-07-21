@@ -83,10 +83,12 @@ func UnquoteArg(arg string) string {
 	if len(arg) < 2 || (arg[0] != '"' && arg[0] != '\'') {
 		return arg
 	}
+	q := arg[0]
+	arg = arg[1:]
 	var buf strings.Builder
 	buf.Grow(len(arg))
-	for len(arg) > 0 {
-		r, _, tail, err := strconv.UnquoteChar(arg, '"')
+	for len(arg) > 0 && arg[0] != q {
+		r, _, tail, err := strconv.UnquoteChar(arg, q)
 		if err != nil {
 			buf.WriteString(arg)
 			break
