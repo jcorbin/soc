@@ -477,7 +477,7 @@ func writeOutlineInto(node *blackfriday.Node, buf *bytes.Buffer, flush func() er
 func (req *userRequest) rollover(st Stream) error {
 	var (
 		year, month, day = req.now.Date()
-		today            = isotime.Time(nil, year, month, day, 0, 0, 0)
+		today            = isotime.Time(time.Local, year, month, day, 0, 0, 0)
 
 		firstDay    *blackfriday.Node
 		todayNode   *blackfriday.Node
