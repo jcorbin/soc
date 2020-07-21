@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-20
+# 2020-07-21
 
 ## TODO
 
@@ -57,14 +57,22 @@ Next up are two tracks in tandem:
   - `BlockArena` ? maybe up in internal/md or scandown/x
 - implement cmd/soc
   - from cmd/poc
-    - `user{Interface,Handler,userRequest,userResponse}`
-    - `streamStore` -- repo, even if no more retained tree
+    - `streamStore` -- some sort of scandown-oriented read/transform deal
     - outline model, walker, temporality, etc
     - today rollover
 
 ## WIP
 
 ## Done
+
+- wind down `cmd/poc`
+  - factored out `interenal/socui` around a trio of `Request` `Response` and
+    `Handler` types, dropping the "server" conceit, decoupling from storage
+    concerns, and now with a test
+
+# 2020-07-20
+
+- minor refactoring and planning towards `cmd/soc`
 
 # 2020-07-18
 
