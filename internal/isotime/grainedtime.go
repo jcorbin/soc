@@ -285,13 +285,13 @@ func Time(loc *time.Location, year int, month time.Month, day, hour, minute, sec
 			if day > 0 {
 				t.grain++
 				t.day = day
-				if hour >= 0 {
+				if hour > 0 {
 					t.grain++
 					t.hour = hour
-					if minute >= 0 {
+					if minute > 0 {
 						t.grain++
 						t.minute = minute
-						if second >= 0 {
+						if second > 0 {
 							t.grain++
 							t.second = second
 						}
