@@ -55,7 +55,7 @@ func ScanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
 			if r == '\\' {
 				esc = true
 			} else if !esc && r == q {
-				return i + width, data[start:i], nil
+				return i + width, data[start : i+width], nil
 			} else {
 				esc = false
 			}
