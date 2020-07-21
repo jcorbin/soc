@@ -21,7 +21,7 @@ const (
 	TimeGrainSecond
 )
 
-// GrainedTime is a variabley grained ISO time range: a year, month, day, hour,
+// GrainedTime is a variably grained ISO time range: a year, month, day, hour,
 // minute, or second. Its zero value has TimeGrainNone.
 type GrainedTime struct {
 	grain  TimeGrain
@@ -100,7 +100,7 @@ func (t GrainedTime) Any() bool {
 }
 
 // Equal returns true if both times have the same granularity, and equal
-// components up to thait grain.
+// components up to that grain.
 func (t GrainedTime) Equal(other GrainedTime) bool {
 	if other.grain != t.grain {
 		return false
@@ -165,7 +165,7 @@ func (t GrainedTime) Time() time.Time {
 	return time.Time{}
 }
 
-// String returns an ISO time string reprenesting the time range; only
+// String returns an ISO time string representing the time range; only
 // specifies components up to the set granularity.
 func (t GrainedTime) String() string {
 	tt := t.Time()
@@ -271,8 +271,7 @@ func (t GrainedTime) Parse(s string) (sub GrainedTime, rest string, parsed bool)
 // that isn't usable: year, month, and day must be positive, while hour, minute
 // and second must be non-negative.
 // If loc is nil, time.Local is used.
-func Time(loc *time.Location, year int, month time.Month, day, hour, minute,
-	second int) (t GrainedTime) {
+func Time(loc *time.Location, year int, month time.Month, day, hour, minute, second int) (t GrainedTime) {
 	t.loc = loc
 	if loc == nil {
 		loc = time.Local
