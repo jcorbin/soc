@@ -28,6 +28,7 @@ func main() {
 		stdin  bool
 		now    = time.Now()
 		respTo = io.Writer(os.Stdout)
+		store  streamStore
 		ui     userInterface
 
 		mdExtensisons = 0 |
@@ -41,22 +42,30 @@ func main() {
 			blackfriday.HeadingIDs |
 			blackfriday.BackslashLineBreak
 	)
-	ui.handle = handleUserRequest
+	ui.handle = func(req *userRequest, resp *userResponse) error {
+		if respTo == store.To {
+			return errors.New("in-situ response not supported") // TODO buffer then store
+		}
+		// TODO eliminate transactional load/save once we have atomic storage (rather than invalidated logging)
+		return store.with(func(st Stream) error {
+			return handleUserRequest(st, req, resp)
+		})
+	}
 
 	_, streamFile, streamFileErr := socutil.FindWDFile("stream.md")
 
 	flag.BoolVar(&stdin, "stdin", false,
 		"read streeam from stdin, write to stdout, instead of file storage")
-	flag.StringVar(&ui.store.filename, "file", streamFile,
+	flag.StringVar(&store.filename, "file", streamFile,
 		"override path to stream file storage")
 
 	flag.Parse()
-	ui.store.md = blackfriday.New(blackfriday.WithExtensions(mdExtensisons))
+	store.md = blackfriday.New(blackfriday.WithExtensions(mdExtensisons))
 
 	if stdin {
-		ui.store.from = os.Stdin
-		ui.store.To = os.Stdout
-	} else if ui.store.filename == "" && flag.Arg(0) != "init" {
+		store.from = os.Stdin
+		store.To = os.Stdout
+	} else if store.filename == "" && flag.Arg(0) != "init" {
 		// TODO make init work
 		log.Printf("no stream file found; run init")
 		if streamFileErr != nil {
@@ -66,11 +75,11 @@ func main() {
 	}
 
 	// TODO detect stream file, prefer if stdin is tty; maybe only do stdio proc by flag
-	if ui.store.To == os.Stdout && respTo == os.Stdout {
+	if store.To == os.Stdout && respTo == os.Stdout {
 		respTo = os.Stderr // TODO in-situ response section/buffer
 	}
 
-	ui.store.To = &socutil.ErrWriter{Writer: ui.store.To}
+	store.To = &socutil.ErrWriter{Writer: store.To}
 	respTo = &socutil.ErrWriter{Writer: respTo}
 	if err := ui.serveArgs(now, flag.Args(), respTo); err != nil {
 		log.Fatal(err)
@@ -99,10 +108,9 @@ type Stream interface {
 	Commit(message string, args ...interface{}) error
 }
 
-type userHandler func(st Stream, req *userRequest, resp *userResponse) error
+type userHandler func(req *userRequest, resp *userResponse) error
 
 type userInterface struct {
-	store  streamStore
 	handle userHandler
 }
 
@@ -147,16 +155,10 @@ func (ui *userInterface) serveArgs(now time.Time, args []string, respTo io.Write
 }
 
 func (ui *userInterface) serve(req *userRequest, respTo io.Writer) error {
-	if respTo == ui.store.To {
-		return errors.New("in-situ response not supporteed") // TODO buffer then store
-	}
-	// TODO eliminate transactional load/save once we have atomic storage (rather than invalidated logging)
-	return ui.store.with(func(st Stream) error {
-		return req.serve(st, ui.handle, respTo)
-	})
+	return req.serve(ui.handle, respTo)
 }
 
-func (req *userRequest) serve(st Stream, handle userHandler, respTo io.Writer) (rerr error) {
+func (req *userRequest) serve(handle userHandler, respTo io.Writer) (rerr error) {
 	defer func() {
 		if rerr == nil {
 			rerr = req.err
@@ -171,7 +173,7 @@ func (req *userRequest) serve(st Stream, handle userHandler, respTo io.Writer) (
 		}
 	}()
 
-	return handle(st, req, &resp)
+	return handle(req, &resp)
 }
 
 func (req *userRequest) Now() time.Time {
