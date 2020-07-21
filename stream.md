@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-19
+# 2020-07-20
 
 ## TODO
 
@@ -54,6 +54,13 @@ Next up are two tracks in tandem:
   - Inline parsing
   - Commonmark spec conformance tests
   - continue to clarify / refactor BlockStack core logic
+  - `BlockArena` ? maybe up in internal/md or scandown/x
+- implement cmd/soc
+  - from cmd/poc
+    - `user{Interface,Handler,userRequest,userResponse}`
+    - `streamStore` -- repo, even if no more retained tree
+    - outline model, walker, temporality, etc
+    - today rollover
 
 ## WIP
 
@@ -62,7 +69,7 @@ Next up are two tracks in tandem:
 # 2020-07-18
 
 - scandown
-  - wrote initial pass at block content trimming; BlockStack is now also an
+  - wrote initial pass at block content trimming; `BlockStack` is now also an
     `io.Reader` and an `io.Seeker`
 
 # 2020-07-17
