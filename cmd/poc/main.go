@@ -2,7 +2,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"errors"
 	"flag"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/google/renameio"
 	"github.com/jcorbin/soc/internal/isotime"
+	"github.com/jcorbin/soc/internal/socui"
 	"github.com/jcorbin/soc/internal/socutil"
 	"github.com/russross/blackfriday"
 )
@@ -26,10 +26,8 @@ import (
 func main() {
 	var (
 		stdin  bool
-		now    = time.Now()
 		respTo = io.Writer(os.Stdout)
 		store  streamStore
-		ui     userInterface
 
 		mdExtensisons = 0 |
 			blackfriday.NoIntraEmphasis |
@@ -42,15 +40,6 @@ func main() {
 			blackfriday.HeadingIDs |
 			blackfriday.BackslashLineBreak
 	)
-	ui.handle = func(req *userRequest, resp *userResponse) error {
-		if respTo == store.To {
-			return errors.New("in-situ response not supported") // TODO buffer then store
-		}
-		// TODO eliminate transactional load/save once we have atomic storage (rather than invalidated logging)
-		return store.with(func(st Stream) error {
-			return handleUserRequest(st, req, resp)
-		})
-	}
 
 	_, streamFile, streamFileErr := socutil.FindWDFile("stream.md")
 
@@ -81,13 +70,21 @@ func main() {
 
 	store.To = &socutil.ErrWriter{Writer: store.To}
 	respTo = &socutil.ErrWriter{Writer: respTo}
-	if err := ui.serveArgs(now, flag.Args(), respTo); err != nil {
+	if err := socui.CLIRequest().Serve(respTo, socui.HandlerFunc(func(req *socui.Request, resp *socui.Response) error {
+		if respTo == store.To {
+			return errors.New("in-situ response not supported") // TODO buffer then store
+		}
+		// TODO eliminate transactional load/save once we have atomic storage (rather than invalidated logging)
+		return store.with(func(st Stream) error {
+			return handleUserRequest(st, req, resp)
+		})
+	})); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func handleUserRequest(st Stream, req *userRequest, resp *userResponse) error {
-	if err := rollover(st, req.now); err != nil {
+func handleUserRequest(st Stream, req *socui.Request, resp *socui.Response) error {
+	if err := rollover(st, req.Now()); err != nil {
 		return err
 	}
 
@@ -108,12 +105,6 @@ type Stream interface {
 	Commit(message string, args ...interface{}) error
 }
 
-type userHandler func(req *userRequest, resp *userResponse) error
-
-type userInterface struct {
-	handle userHandler
-}
-
 type streamStore struct {
 	md *blackfriday.Markdown
 	stream
@@ -129,118 +120,6 @@ type streamStore struct {
 
 type stream struct {
 	doc *blackfriday.Node
-}
-
-type userRequest struct {
-	now time.Time
-
-	body        io.Reader
-	bodyScanner *bufio.Scanner
-
-	cmd        bytes.Reader
-	cmdScanner *bufio.Scanner
-
-	err error
-}
-
-type userResponse struct {
-	socutil.WriteBuffer
-}
-
-func (ui *userInterface) serveArgs(now time.Time, args []string, respTo io.Writer) error {
-	var req userRequest
-	req.now = now
-	req.body = bytes.NewReader(socutil.QuotedArgs(args))
-	return ui.serve(&req, respTo)
-}
-
-func (ui *userInterface) serve(req *userRequest, respTo io.Writer) error {
-	return req.serve(ui.handle, respTo)
-}
-
-func (req *userRequest) serve(handle userHandler, respTo io.Writer) (rerr error) {
-	defer func() {
-		if rerr == nil {
-			rerr = req.err
-		}
-	}()
-
-	var resp userResponse
-	resp.To = respTo
-	defer func() {
-		if ferr := resp.Flush(); rerr == nil {
-			rerr = ferr
-		}
-	}()
-
-	return handle(req, &resp)
-}
-
-func (req *userRequest) Now() time.Time {
-	return req.now
-}
-
-func (req *userRequest) ScanCommand() bool {
-	if req.err != nil {
-		return false
-	}
-
-	if req.bodyScanner == nil {
-		if req.bodyScanner == nil && req.body != nil {
-			// TODO use markdown scanning once we have it
-			req.bodyScanner = bufio.NewScanner(req.body)
-			req.bodyScanner.Split(bufio.ScanLines)
-		}
-	}
-	req.cmd.Reset(nil)
-	req.cmdScanner = nil
-
-	if !req.bodyScanner.Scan() {
-		req.err = req.bodyScanner.Err()
-		return false
-	}
-
-	return true
-}
-
-func (req *userRequest) ScanArg() bool {
-	if req.err != nil {
-		return false
-	}
-
-	if req.cmdScanner == nil {
-		if req.bodyScanner == nil && !req.ScanCommand() {
-			return false
-		}
-		req.cmd.Reset(req.bodyScanner.Bytes())
-		req.cmdScanner = bufio.NewScanner(&req.cmd)
-		req.cmdScanner.Split(socutil.ScanArgs)
-	}
-
-	if !req.cmdScanner.Scan() {
-		req.err = req.cmdScanner.Err()
-		return false
-	}
-
-	return true
-}
-
-func (req *userRequest) Command() string {
-	if req.bodyScanner == nil {
-		return ""
-	}
-	return req.bodyScanner.Text()
-}
-
-func (req *userRequest) Arg() string {
-	if req.cmdScanner == nil {
-		return ""
-	}
-	return socutil.UnquoteArg(req.cmdScanner.Text())
-}
-
-func (req *userRequest) Err() error {
-	return req.err
 }
 
 func (st *streamStore) Root() *blackfriday.Node {
