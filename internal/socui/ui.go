@@ -65,9 +65,14 @@ func CLIRequest() Request {
 
 // ArgsRequest builds a Request from a given time and argument strings.
 func ArgsRequest(now time.Time, args []string) Request {
+	return StreamRequest(now, bytes.NewReader(socutil.QuotedArgs(args)))
+}
+
+// StreamRequest builds a Request from a given time and body Reader.
+func StreamRequest(now time.Time, body io.Reader) Request {
 	var req Request
 	req.now = now
-	req.body = bytes.NewReader(socutil.QuotedArgs(args))
+	req.body = body
 	return req
 }
 
