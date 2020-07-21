@@ -78,6 +78,10 @@ func main() {
 }
 
 func handleUserRequest(st Stream, req *userRequest, resp *userResponse) error {
+	if err := rollover(st, req.now); err != nil {
+		return err
+	}
+
 	if req.ScanArg() && req.Arg() == "outline" {
 		writeOutlineInto(st.Root(), &resp.Buffer, resp.MaybeFlush)
 	}
@@ -153,10 +157,6 @@ func (ui *userInterface) serve(req *userRequest, respTo io.Writer) error {
 }
 
 func (req *userRequest) serve(st Stream, handle userHandler, respTo io.Writer) (rerr error) {
-	if err := req.rollover(st); err != nil {
-		return err
-	}
-
 	defer func() {
 		if rerr == nil {
 			rerr = req.err
@@ -474,9 +474,9 @@ func writeOutlineInto(node *blackfriday.Node, buf *bytes.Buffer, flush func() er
 	})
 }
 
-func (req *userRequest) rollover(st Stream) error {
+func rollover(st Stream, now time.Time) error {
 	var (
-		year, month, day = req.now.Date()
+		year, month, day = now.Date()
 		today            = isotime.Time(time.Local, year, month, day, 0, 0, 0)
 
 		firstDay    *blackfriday.Node
