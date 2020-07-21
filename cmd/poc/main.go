@@ -11,7 +11,6 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -44,7 +43,8 @@ func main() {
 	)
 	ui.handle = handleUserRequest
 
-	streamFile, streamFileErr := findStreamFile()
+	_, streamFile, streamFileErr := socutil.FindWDFile("stream.md")
+
 	flag.BoolVar(&stdin, "stdin", false,
 		"read streeam from stdin, write to stdout, instead of file storage")
 	flag.StringVar(&ui.store.filename, "file", streamFile,
@@ -75,22 +75,6 @@ func main() {
 	if err := ui.serveArgs(now, flag.Args(), respTo); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func findStreamFile() (string, error) {
-	if _, err := os.Stat("stream.md"); err == nil {
-		return filepath.Abs("stream.md")
-	}
-	// TODO prefer to anchor from git dir
-	if wd, err := os.Getwd(); err == nil {
-		for ; len(wd) > 0; wd = filepath.Dir(wd) {
-			path := filepath.Join(wd, "stream.md")
-			if _, err := os.Stat(path); err == nil {
-				return filepath.Abs(path)
-			}
-		}
-	}
-	return "", nil
 }
 
 func handleUserRequest(st Stream, req *userRequest, resp *userResponse) error {
