@@ -236,22 +236,7 @@ func (req *userRequest) Arg() string {
 	if req.cmdScanner == nil {
 		return ""
 	}
-	arg := req.cmdScanner.Text()
-	if len(arg) > 2 && (arg[0] == '"' || arg[0] == '\'') {
-		var sb strings.Builder
-		sb.Grow(len(arg))
-		for len(arg) > 0 {
-			r, _, tail, err := strconv.UnquoteChar(arg, '"')
-			if err != nil {
-				sb.WriteString(arg)
-				break
-			}
-			sb.WriteRune(r)
-			arg = tail
-		}
-		arg = sb.String()
-	}
-	return arg
+	return socutil.UnquoteArg(req.cmdScanner.Text())
 }
 
 func (req *userRequest) Err() error {

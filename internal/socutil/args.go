@@ -77,3 +77,22 @@ func ScanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// Request more data.
 	return start, nil, nil
 }
+
+// UnquoteArg returns an unquoted copy of arg if it quoted, or arg itself otherwise.
+func UnquoteArg(arg string) string {
+	if len(arg) < 2 || (arg[0] != '"' && arg[0] != '\'') {
+		return arg
+	}
+	var buf strings.Builder
+	buf.Grow(len(arg))
+	for len(arg) > 0 {
+		r, _, tail, err := strconv.UnquoteChar(arg, '"')
+		if err != nil {
+			buf.WriteString(arg)
+			break
+		}
+		buf.WriteRune(r)
+		arg = tail
+	}
+	return buf.String()
+}
