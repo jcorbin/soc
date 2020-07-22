@@ -46,6 +46,24 @@ func TestRequest_Serve(t *testing.T) {
 		},
 
 		{
+			name: "args break",
+			now:  time.Date(2020, 8, 6, 7, 5, 3, 0, time.UTC),
+			args: []string{"a", "b", "--", "c", "d"},
+			out: []string{
+				"now: 2020-08-06T07:05:03Z",
+				"",
+				`1) command: "a b"`,
+				`  1. arg: "a"`,
+				`  2. arg: "b"`,
+				"",
+				`2) command: "c d"`,
+				`  1. arg: "c"`,
+				`  2. arg: "d"`,
+				"",
+			},
+		},
+
+		{
 			name: "2 lines",
 			now:  time.Date(2020, 8, 6, 7, 5, 3, 0, time.UTC),
 			body: func() io.Reader {

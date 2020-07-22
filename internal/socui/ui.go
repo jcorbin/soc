@@ -65,7 +65,24 @@ func CLIRequest() Request {
 
 // ArgsRequest builds a Request from a given time and argument strings.
 func ArgsRequest(now time.Time, args []string) Request {
-	return StreamRequest(now, bytes.NewReader(socutil.QuotedArgs(args)))
+	var (
+		tmp []byte
+		buf bytes.Buffer
+		i   int
+	)
+	for j := 0; j <= len(args); j++ {
+		if j == len(args) || args[j] == "--" {
+			tmp = tmp[:0]
+			if i > 0 {
+				// TODO will need to change for markdown structured commands
+				tmp = append(tmp, '\n')
+			}
+			tmp = socutil.AppendQuotedArgs(tmp, args[i:j])
+			buf.Write(tmp)
+			i = j + 1
+		}
+	}
+	return StreamRequest(now, bytes.NewReader(buf.Bytes()))
 }
 
 // StreamRequest builds a Request from a given time and body Reader.
