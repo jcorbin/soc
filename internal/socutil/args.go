@@ -21,8 +21,11 @@ func QuotedArgs(args []string) []byte {
 // AppendQuotedArgs appends each elemenet of args, quoting them with strconv if
 // they contain a space.
 func AppendQuotedArgs(b []byte, args []string) []byte {
+	first := true
 	for _, arg := range args {
-		if len(b) > 0 {
+		if first {
+			first = false
+		} else {
 			b = append(b, ' ')
 		}
 		if strings.ContainsRune(arg, ' ') {
