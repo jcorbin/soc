@@ -517,13 +517,13 @@ func (o *outlineWalker) enter(node *blackfriday.Node, visitor outlineVisitor) (s
 
 	o.tmp.Reset()
 	collectTitle(&o.tmp, node)
-	title := o.tmp.String()
+	title := o.tmp.Bytes()
 
 	t, title, _ = t.Parse(title)
 
 	o.t = append(o.t, t)
 	o.path = append(o.path, node)
-	o.title = append(o.title, title)
+	o.title = append(o.title, string(title))
 	o.skip = append(o.skip, skip)
 
 	if !skip {

@@ -1,8 +1,7 @@
 package isotime
 
 import (
-	"strconv"
-	"strings"
+	"bytes"
 	"time"
 	"unicode"
 )
@@ -190,16 +189,18 @@ func (t GrainedTime) String() string {
 // Parse consumes any possible components from the left of the given string,
 // returning a finer grained time with additional components, the trimmed
 // string remnant, and true if any such components were consumed.
-func (t GrainedTime) Parse(s string) (sub GrainedTime, rest string, parsed bool) {
+func (t GrainedTime) Parse(b []byte) (sub GrainedTime, rest []byte, parsed bool) {
 	if t.grain >= TimeGrainSecond {
-		return t, s, false
+		return t, b, false
 	}
+	rest = bytes.TrimLeftFunc(b, unicode.IsSpace)
 
-	if rest == "" {
-		rest = strings.TrimLeftFunc(s, unicode.IsSpace)
-	}
 	for len(rest) > 0 && t.grain < TimeGrainSecond {
-		next := strings.TrimLeft(rest, " ")
+		next := rest
+		for len(next) > 0 && next[0] == ' ' {
+			next = next[1:]
+		}
+
 		if t.grain < TimeGrainHour {
 			if next[0] == '-' || next[0] == '/' {
 				next = next[1:]
@@ -209,62 +210,75 @@ func (t GrainedTime) Parse(s string) (sub GrainedTime, rest string, parsed bool)
 				next = next[1:]
 			}
 		}
-
+		var num int
 		i := 0
-		for i < len(next) && '0' <= next[i] && next[i] <= '9' {
+		for i < len(next) {
+			c := next[i]
+			if c < '0' || '9' < c {
+				break
+			}
+			num = 10*num + int(c-'0')
 			i++
 		}
-		part := next[:i]
-		next = next[i:]
-
-		num, err := strconv.Atoi(part)
-		if err != nil {
+		if i == 0 {
 			break
 		}
-
-		switch t.grain {
-		case TimeGrainNone:
-			t.year = num
-
-		case TimeGrainYear:
-			if num == 0 || num > 12 {
-				break
-			}
-			t.month = time.Month(num)
-
-		case TimeGrainMonth:
-			// TODO stricter max day-of-month logic
-			if num == 0 || num > 31 {
-				break
-			}
-			t.day = num
-
-		case TimeGrainDay:
-			if num > 24 {
-				break
-			}
-			t.hour = num
-
-		case TimeGrainHour:
-			if num > 59 {
-				break
-			}
-			t.minute = num
-
-		case TimeGrainMinute:
-			if num > 59 {
-				break
-			}
-			t.second = num
-
-		}
-		t.grain++
+		t = t.integrate(num)
+		next = next[i:]
 
 		rest = next
 		parsed = true
 	}
 
 	return t, rest, parsed
+}
+
+// ParseString is a string version of Parse.
+func (t GrainedTime) ParseString(s string) (sub GrainedTime, rest string, parsed bool) {
+	var restBytes []byte
+	sub, restBytes, parsed = t.Parse([]byte(s))
+	return sub, string(restBytes), parsed
+}
+
+func (t GrainedTime) integrate(num int) GrainedTime {
+	switch t.grain {
+	case TimeGrainNone:
+		t.year = num
+
+	case TimeGrainYear:
+		if num == 0 || num > 12 {
+			break
+		}
+		t.month = time.Month(num)
+
+	case TimeGrainMonth:
+		// TODO stricter max day-of-month logic
+		if num == 0 || num > 31 {
+			break
+		}
+		t.day = num
+
+	case TimeGrainDay:
+		if num > 24 {
+			break
+		}
+		t.hour = num
+
+	case TimeGrainHour:
+		if num > 59 {
+			break
+		}
+		t.minute = num
+
+	case TimeGrainMinute:
+		if num > 59 {
+			break
+		}
+		t.second = num
+
+	}
+	t.grain++
+	return t
 }
 
 // Time returns a GrainedTime with the given components, stopping at the first
