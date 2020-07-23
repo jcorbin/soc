@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-21
+# 2020-07-23
 
 ## TODO
 
@@ -63,10 +63,31 @@ Next up are two tracks in tandem:
 
 ## WIP
 
+- cmd/soc
+  - command/server plumbing with help and test harness
+  - outline list command
+
 ## Done
 
+# 2020-07-22
+
+- started an internal `scanio` package
+  - started out with an abstracted scan/token-copy loop
+  - then added a byte arena to cache tokens
+  - makes room to introduce a [rescanner] fork of `bufio.Scanner` eventually to
+    support things like reseting and seeking
+- cmd/soc 
+  - sketched command/server structure in dev branch, need to finish help system
+    and testing before done
+  - got a working dev prototype of outline list working
+- support multiple commands from the CLI args stream, framed by the classic
+  `--` terminator all `getopt(1)`
+- lowered the isotime parsing interface to bytes for efficiency
+
+# 2020-07-21
+
 - wind down `cmd/poc`
-  - factored out `interenal/socui` around a trio of `Request` `Response` and
+  - factored out `internal/socui` around a trio of `Request` `Response` and
     `Handler` types, dropping the "server" conceit, decoupling from storage
     concerns, and now with a test
 
