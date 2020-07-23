@@ -23,6 +23,7 @@ func Test_ui(t *testing.T) {
 			"\n",
 			"## Available Commands\n",
 			"- help: show help overview or on a specific topic or command\n",
+			"- list: print stream outline listing\n",
 		),
 
 		cmd([]string{"help"},
@@ -31,6 +32,31 @@ func Test_ui(t *testing.T) {
 			"\n",
 			"## Available Commands\n",
 			"- help: show help overview or on a specific topic or command\n",
+			"- list: print stream outline listing\n",
+		),
+
+		cmd([]string{"list"},
+			errors.New("stream does not exist; run `soc init` to create one"),
+		),
+
+		// TODO use commands to build up to this, rather than faking
+		fakeStream("for list",
+			"# 2020-07-23\n",
+			"## TODO\n",
+			"- the other thing\n",
+			"## WIP\n",
+			"- that\n",
+			"## Done\n",
+			"- this\n",
+			"# 2020-07-22\n",
+			"- different things\n",
+		),
+
+		cmd([]string{"list"},
+			"1. [2020-07-23] TODO\n",
+			"2. [2020-07-23] WIP\n",
+			"3. [2020-07-23] Done\n",
+			"4. [2020-07-22] different things\n",
 		),
 	)
 }
