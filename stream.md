@@ -32,22 +32,11 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-23
+# 2020-07-24
 
 ## TODO
 
-- TODO mining
-  - from prior dones
-  - from external code
-- git integration
-- coalescing / grouping
-- un-...
-- last reference
-- addition
-- movement
-- matching: move/elaborate, add/copy
-- v0 command architecture, built from poc pieces and scandown
-- scandown
+- [scandown]
   - write a package level readme and/or doc.go
   - unit test for BlockStack.Seek
   - see `block.go` for more TODOs
@@ -55,31 +44,82 @@ Next up are two tracks in tandem:
   - Commonmark spec conformance tests
   - continue to clarify / refactor BlockStack core logic
   - `BlockArena` ? maybe up in internal/md or scandown/x
-- implement cmd/soc
-  - from cmd/poc
-    - `streamStore` -- some sort of scandown-oriented read/transform deal
-    - outline model, walker, temporality, etc
-    - today rollover
+
+- [scanio]
+  - [spliter] interfacification of `bufio.SplitFunc`
+  - [bytescanner] drive a splitter over an in-memory `[]byte`
+  - [rescanner] evolution of `bufio.Scanner` that can seek and/or have its
+    reader swapped
+    - paired with a [splitter] extension to notify it of the discontinuity
+
+- future/upcoming
+- tagged item relations
+- [cmd/soc]
+  - [matching] prototype under the list command to limit what is shown
+    - based around the outline walker
+    - only match on the first paragraph; maybe syntax to deepen beyond
+    - tail/leaf may be unmatched, used by context: e.g. to add a new item using
+      matched prior structure
+    - prior command state, like the ability to reference the last affected item
+  - [triggers] for item lifecycle
+    - addition: `todo/wip/done ...`
+    - movement: `todo/wip/done ...` [needs: matching]
+    - remove: `drop todo/wip/done ...`
+  - [config]
+    - custom trigger terms
+    - custom phases
+    - custom commands?
+  - [model] once matching and item triggers are done, the boundary of a
+    reasonable "stream model package" may start to emerge; but may defer any
+    such factoring until forced by a second toplevel entry point like [socbot]
+  - fmt command to cleanup the stream (reformat markdown, line(un)wrap, etc)
+  - ingest/import/harvest command(s)
+    - mine things like `// TODO` comments from code
+    - mine items from remarks in prior done items; could use during rollover
+    - mine wip/done fodder or even items from git log
+  - git versioned stream storage
 
 ## WIP
 
-- cmd/soc
-  - command/server plumbing with help and test harness
-  - outline list command
+- [cmd/soc]
+  - init command
+  - [dev] outline list command
+  - today rollover
+  - delete cmd/poc; cleanup
 
 ## Done
 
+# 2020-07-23
+
+- [cmd/soc]
+  - [dev] memory/fs-based storage module with tests
+  - [dev] ui module done and tested
+    - command dispatcher system based around a `req`uest command/arg scanner,
+      and a `res`ponse write buffer
+    - [idea] eventually `req` may support structured markdown commands, easier
+      to type in the chat or editor scenario; this should allow things like
+      commands taking a body, or the user filling out a reply to a prior
+      response
+    - [idea] eventually `res` may support structured markdown output
+      - can be done by using a `scandown.BlockStack` to prefix outgoing lines
+        with necessary block markers
+      - which could be wrapped into an `io.Writer` that writes contents within
+        a block stack context
+      - which could pair with an outer `io.Writer` that parses the written byte
+        stream, updating the block stack as it goes, which could allow users to
+        both "just write bytes" at the outer level, and also to handnoff an
+        inner content writer to code that isn't structure aware
+
 # 2020-07-22
 
-- started an internal `scanio` package
-  - started out with an abstracted scan/token-copy loop
-  - then added a byte arena to cache tokens
-  - makes room to introduce a [rescanner] fork of `bufio.Scanner` eventually to
-    support things like reseting and seeking
-- cmd/soc 
-  - sketched command/server structure in dev branch, need to finish help system
-    and testing before done
-  - got a working dev prototype of outline list working
+- [scanio] started an `internal/scanio` package
+  - [dev] started out with an abstracted scan/token-copy loop
+  - [dev] then added a byte arena to cache tokens
+  - [idea] makes room to introduce a [rescanner] fork of `bufio.Scanner`
+    eventually to support things like reseting and seeking
+- [cmd/soc] 
+  - [dev] sketched command/server structure; next: finish help system and test
+  - [dev] working list outline prototype
 - support multiple commands from the CLI args stream, framed by the classic
   `--` terminator all `getopt(1)`
 - lowered the isotime parsing interface to bytes for efficiency
@@ -93,18 +133,18 @@ Next up are two tracks in tandem:
 
 # 2020-07-20
 
-- minor refactoring and planning towards `cmd/soc`
+- minor refactoring and planning towards [cmd/soc]
 
 # 2020-07-18
 
-- scandown
+- [scandown]
   - wrote initial pass at block content trimming; `BlockStack` is now also an
     `io.Reader` and an `io.Seeker`
 
 # 2020-07-17
 
 - broke out a readme, cleaned up the stream, and push to github
-- scandown
+- [scandown]
   - de-interned so that it can be used from go playground
   - wrote a [playground example](https://play.golang.org/p/dBrrhPHpKWN)
     demonstrating block stack scanning
@@ -114,7 +154,7 @@ Next up are two tracks in tandem:
 
 # 2020-07-16
 
-- scandown BlockStack Works™ ( for me, in one-off verification )
+- [scandown] BlockStack Works™ ( for me, in one-off verification )
   - enough to unblock prototyping a soc outline scanner and maybe transforms
   - enough to start work on markdown phase 2 inline parsing
 
