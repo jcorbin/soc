@@ -3,16 +3,39 @@ package main
 import (
 	"io"
 	"io/ioutil"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
 func Test_memStore(t *testing.T) {
-	storeTest{&memStore{}}.run(t)
+	storeTest{store: &memStore{}}.run(t)
 }
 
-type storeTest struct{ store }
+func Test_fsStore(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", "fsStore")
+	require.NoError(t, err, "must create temp dir")
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+
+	filename := filepath.Join(tmpDir, "stream.md")
+	storeTest{
+		store: &fsStore{filename: filename},
+		post: func(t *testing.T, content string) {
+			b, err := ioutil.ReadFile(filename)
+			if assert.NoError(t, err, "unexpected read error") {
+				assert.Equal(t, content, string(b), "expected file content")
+			}
+		},
+	}.run(t)
+}
+
+type storeTest struct {
+	store
+	post func(t *testing.T, content string)
+}
 
 func (st storeTest) run(t *testing.T) {
 	for _, step := range []struct {
@@ -48,11 +71,9 @@ func (st storeTest) writeWith(open func() (cleanupWriteCloser, error), content s
 			assert.NoError(t, w.Cleanup(), "cleanup should succeed")
 		}()
 		if content != "" {
-			_, err = io.WriteString(w, content)
-			if err == nil {
-				err = w.Close()
+			if _, err := io.WriteString(w, content); assert.NoError(t, err, "must write") {
+				assert.NoError(t, w.Close(), "must close")
 			}
-			assert.NoError(t, err, "must write and close")
 		}
 	}
 }
@@ -66,12 +87,13 @@ func (st storeTest) expect(content string) func(t *testing.T) {
 	return func(t *testing.T) {
 		r, err := st.open()
 		require.NoError(t, err, "must open")
-		b, err := ioutil.ReadAll(r)
-		if err == nil {
-			err = r.Close()
-		}
-		if assert.NoError(t, err, "must read and close") {
-			assert.Equal(t, content, string(b), "expected content")
+		if b, err := ioutil.ReadAll(r); assert.NoError(t, err, "must read") {
+			if assert.NoError(t, r.Close(), "must read and close") {
+				assert.Equal(t, content, string(b), "expected content")
+				if st.post != nil {
+					t.Run("post", func(t *testing.T) { st.post(t, content) })
+				}
+			}
 		}
 	}
 }
