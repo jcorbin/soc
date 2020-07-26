@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-24
+# 2020-07-25
 
 ## TODO
 
@@ -88,6 +88,88 @@ Next up are two tracks in tandem:
   - delete cmd/poc; cleanup
 
 ## Done
+
+# 2020-07-24
+
+- [cmd/soc]
+  - [dev] list command now wiried up and working; TODO test it
+  - [dev] started refactoring ui test case setup: is now reusable for the list
+    command, still have a ways to go towards a proper mini interpreter for an
+    integration test scenario
+  - [dev] minor improvements in `main()` wiring
+  - [dev] made builtin command/help registration extensible
+  - [dev] collapsed description server extension into help extension, to avoid
+    a needless combinatoric problem. Consider the code below:
+    - the combined `rootBar` + `rootFoo` value does not implement `fooRooter`,
+      despite embedding a value that does
+    - a workaround is to implement combined `rootFooBar` structs, maybe
+      assisted by a `withBar` constructor that checks if the passed `rooter`
+      implements the `bar` extension, switching implementation if so
+    - another solution is the (un)wrapper approach exhibited by the `errors`
+      package
+    - for soc's internal command server infrastructure's help system, neither
+      seemed worthwhile, so I just subsumed descriptions into the help
+      extension
+
+    ```golang
+    package main
+
+    import "fmt"
+
+    type rooter interface {
+        root() int
+    }
+
+    type fooRooter interface {
+        rooter
+        foo() int
+    }
+
+    type barRooter interface {
+        rooter
+        bar() int
+    }
+
+    type rootFoo struct {
+        rooter
+        f int
+    }
+
+    type rootBar struct {
+        rooter
+        b int
+    }
+
+    type zaro struct{ v int }
+
+    func (z zaro) root() int    { return z.v }
+    func (rf rootFoo) foo() int { return rf.f }
+    func (rb rootBar) bar() int { return rb.b }
+
+    func main() {
+        a := zaro{1}
+        b := zaro{2}
+        c := zaro{3}
+        for i, r := range []rooter{
+            a,
+            b,
+            c,
+            rootFoo{a, 4},
+            rootBar{b, 5},
+            rootBar{rootFoo{c, 6}, 7},
+        } {
+            var rv, fv, bv int
+            rv = r.root()
+            if f, ok := r.(fooRooter); ok {
+                fv = f.foo()
+            }
+            if b, ok := r.(barRooter); ok {
+                bv = b.bar()
+            }
+            fmt.Printf("[%v] r:%v f:%v b:%v\n", i, rv, fv, bv)
+        }
+    }
+    ```
 
 # 2020-07-23
 
