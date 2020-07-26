@@ -83,16 +83,19 @@ Next up are two tracks in tandem:
 
 - [cmd/soc]
   - init command
-  - [dev] outline list command
   - today rollover
   - delete cmd/poc; cleanup
 
 ## Done
 
+- [cmd/soc]
+  - released the list command prototype with initial ui/testing/storage infra
+  - got the ui test to a nice place over a step compiler/interpreter
+
 # 2020-07-24
 
 - [cmd/soc]
-  - [dev] list command now wiried up and working; TODO test it
+  - [dev] list command now wired up and working; TODO test it
   - [dev] started refactoring ui test case setup: is now reusable for the list
     command, still have a ways to go towards a proper mini interpreter for an
     integration test scenario
