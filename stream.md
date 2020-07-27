@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-25
+# 2020-07-26
 
 ## TODO
 
@@ -92,7 +92,7 @@ Next up are two tracks in tandem:
   - released the list command prototype with initial ui/testing/storage infra
   - got the ui test to a nice place over a step compiler/interpreter
 
-# 2020-07-24
+# 2020-07-25
 
 - [cmd/soc]
   - [dev] list command now wired up and working; TODO test it
@@ -174,7 +174,7 @@ Next up are two tracks in tandem:
     }
     ```
 
-# 2020-07-23
+# 2020-07-24
 
 - [cmd/soc]
   - [dev] memory/fs-based storage module with tests
