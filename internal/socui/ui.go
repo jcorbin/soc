@@ -93,6 +93,8 @@ func StreamRequest(now time.Time, body io.Reader) Request {
 	return req
 }
 
+const responseBufferSize = 4096
+
 // Serve runs the given handler with the receiver request and a new Response
 // writing to the given writer.
 // Returns any handler, request, or response error (in that order of precedence).
@@ -106,6 +108,11 @@ func (req Request) Serve(w io.Writer, handler Handler) (rerr error) {
 		}
 	}()
 	var resp Response
+	resp.Grow(5 * responseBufferSize / 4)
+	resp.FlushPolicy = socutil.FlushAfter{
+		When:  socutil.FlushPolicyFunc(socutil.FlushLineChunks),
+		Bytes: responseBufferSize,
+	}
 	resp.To = w
 	defer func() {
 		if ferr := resp.Flush(); rerr == nil {
