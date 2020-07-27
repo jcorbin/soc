@@ -30,6 +30,25 @@ type FlushPolicy interface {
 	ShouldFlush(b []byte) int
 }
 
+// FlushAfter implements a FlushPolicy that flushes only after the number of
+// bytes is available. Optionally layered on top of an upstream policy.
+type FlushAfter struct {
+	When  FlushPolicy
+	Bytes int
+}
+
+// ShouldFlush returns len(b) or the upstream When value only if >= Bytes.
+func (fa FlushAfter) ShouldFlush(b []byte) int {
+	if fa.When != nil {
+		if n := fa.When.ShouldFlush(b); n >= fa.Bytes {
+			return n
+		}
+	} else if len(b) >= fa.Bytes {
+		return len(b)
+	}
+	return 0
+}
+
 // FlushPolicyFunc is a convenience adaptor for FlushPolicy around a compatible
 // anonymous function.
 type FlushPolicyFunc func(b []byte) int
