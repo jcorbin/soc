@@ -39,22 +39,16 @@ type outline struct {
 	titled bool
 }
 
-func (out outline) toplevel() bool {
+func (out outline) heading(level int) (_ scanio.ByteArenaToken, isLast bool) {
+	n := 0
 	for i := 0; i < out.title.Len(); i++ {
 		if token := out.title.Get(i); !token.Empty() {
-			return i+1 == out.title.Len()
+			if n++; n == level {
+				return token, i+1 == out.title.Len()
+			}
 		}
 	}
-	return false
-}
-
-func (out outline) firstTitle() scanio.ByteArenaToken {
-	for i := 0; i < out.title.Len(); i++ {
-		if token := out.title.Get(i); !token.Empty() {
-			return token
-		}
-	}
-	return scanio.ByteArenaToken{}
+	return scanio.ByteArenaToken{}, false
 }
 
 func (out outline) lastTime() (t isotime.GrainedTime) {

@@ -36,7 +36,7 @@ func serveList(ctx context, _ *socui.Request, resp *socui.Response) (rerr error)
 		if sc.lastTime().Grain() == 0 {
 			continue
 		}
-		if !sc.toplevel() {
+		if _, isH1 := sc.heading(1); !isH1 {
 			continue
 		}
 		n++
