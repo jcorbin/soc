@@ -156,6 +156,12 @@ func (tokens *ByteTokens) Push(token ByteArenaToken) {
 	tokens.ranges = append(tokens.ranges, rng)
 }
 
+// Extend appends n empty token ranges into the receiver collection, allowing
+// Set(i, token) to work for any i < n.
+func (tokens *ByteTokens) Extend(n int) {
+	tokens.ranges = append(tokens.ranges, make([]byteRange, n)...)
+}
+
 // Truncate discards all tokens upto the i-th from the receiver collection.
 // It then discards all unreferenced bytes from the internal arena buffer.
 // Panics if i out of range.
