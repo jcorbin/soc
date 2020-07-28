@@ -61,19 +61,30 @@ func (out outline) lastTime() (t isotime.GrainedTime) {
 func (out outline) Format(f fmt.State, _ rune) {
 	first := true
 
-	if t := out.time[len(out.time)-1]; t.Grain() > 0 {
-		fmt.Fprintf(f, "[%v]", t)
-		first = false
+	if !f.Flag('+') {
+		if t := out.time[len(out.time)-1]; t.Grain() > 0 {
+			fmt.Fprintf(f, "[%v]", t)
+			first = false
+		}
 	}
 
 	for i := range out.id {
-		if t := out.title.Get(i); !t.Empty() {
-			if first {
-				first = false
-			} else {
-				io.WriteString(f, " ")
-			}
+		t := out.title.Get(i)
+		if !f.Flag('+') && t.Empty() {
+			continue
+		}
 
+		if first {
+			first = false
+		} else {
+			io.WriteString(f, " ")
+		}
+
+		if f.Flag('+') {
+			fmt.Fprintf(f, "%v#%v", out.block[i], out.id[i])
+		}
+
+		if !t.Empty() {
 			var trunc string
 			tb := t.Bytes()
 			if len(tb) > 50 {
@@ -87,10 +98,14 @@ func (out outline) Format(f fmt.State, _ rune) {
 			}
 
 			if f.Flag('+') {
-				fmt.Fprintf(f, "%v(%q%s)", out.block[i], tb, trunc)
+				fmt.Fprintf(f, "(%q%s)", tb, trunc)
 			} else {
 				f.Write(tb)
 				io.WriteString(f, trunc)
+			}
+		} else if f.Flag('+') {
+			if t := out.time[i]; t.Grain() > 0 && (i == 0 || !t.Equal(out.time[i-1])) {
+				fmt.Fprintf(f, "[%v]", t)
 			}
 		}
 	}
