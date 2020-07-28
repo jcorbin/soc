@@ -124,7 +124,7 @@ func (out *outline) sync(blocks scandown.BlockStack) (titled bool) {
 	i := 0 // <= len(out.id)
 
 	// 1. if current block is a Heading, pop to its level and push it
-	if id, head, _ := blocks.Head(); head.Type == scandown.Heading {
+	if head, _ := blocks.Head(); head.Type == scandown.Heading {
 		level := head.Width
 		for ; i < len(out.block); i++ {
 			if b := out.block[i]; b.Type != scandown.Heading || b.Width >= level {
@@ -138,7 +138,7 @@ func (out *outline) sync(blocks scandown.BlockStack) (titled bool) {
 			t = out.time[j]
 		}
 		t, title = out.readTitle(t, &blocks)
-		out.push(id, head, t, title)
+		out.push(blocks.HeadID(), head, t, title)
 		return
 	}
 
@@ -150,14 +150,14 @@ func (out *outline) sync(blocks scandown.BlockStack) (titled bool) {
 	}
 	j := 1 // <= blocks.Len()
 	for ; j < blocks.Len(); i, j = i+1, j+1 {
-		id, b, _ := blocks.Block(j)
+		id := blocks.ID(j)
 		if i < len(out.id) {
 			if out.id[i] == id {
 				continue
 			}
 			out.truncate(i)
 		}
-		switch b.Type {
+		switch b, _ := blocks.Block(j); b.Type {
 		// track list structure...
 		case scandown.List, scandown.Item:
 			t := isotime.Time(time.Local, 0, 0, 0, 0, 0, 0)

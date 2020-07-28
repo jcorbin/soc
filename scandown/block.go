@@ -648,15 +648,25 @@ func (blocks *BlockStack) Len() int {
 	return len(blocks.id)
 }
 
-// Block returns the data for a single block on the stack, including a unique
-// id number, Block definition data, and whether the block is still open
-// (true), or has been closed (false). Panics if i >= Len().
-func (blocks *BlockStack) Block(i int) (id int, b Block, open bool) {
-	return blocks.id[i], blocks.block[i], blocks.offset[i] < 0
+// ID returns a unique id number for a single block on the stack.
+func (blocks *BlockStack) ID(i int) int {
+	return blocks.id[i]
+}
+
+// Block returns the Block definition for a single block on the stack, and
+// whether the block is still open (true), or has been closed (false). Panics
+// if i >= Len().
+func (blocks *BlockStack) Block(i int) (b Block, open bool) {
+	return blocks.block[i], blocks.offset[i] < 0
+}
+
+// Head is a convenience for ID(Len()-1).
+func (blocks *BlockStack) HeadID() (id int) {
+	return blocks.ID(len(blocks.id) - 1)
 }
 
 // Head is a convenience for Block(Len()-1).
-func (blocks *BlockStack) Head() (id int, b Block, open bool) {
+func (blocks *BlockStack) Head() (b Block, open bool) {
 	return blocks.Block(len(blocks.id) - 1)
 }
 
