@@ -233,3 +233,55 @@ func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.Grain
 
 	return t, title
 }
+
+type section struct {
+	byteRange
+	body byteRange
+	id   int
+}
+
+func (sec section) header() byteRange {
+	sec.end = sec.body.start
+	return sec.byteRange
+}
+
+func (sc *outlineScanner) openSection() (sec section) {
+	sec.id = sc.block.HeadID()
+	sec.start = sc.block.Offset()
+	sec.body = sec.byteRange
+	sec.body.start += int64(len(sc.Bytes()))
+	sec.end = -1
+	return sec
+}
+
+func (sc *outlineScanner) within(sec section) bool {
+	for _, id := range sc.outline.id {
+		if id == sec.id {
+			return true
+		}
+	}
+	return false
+}
+
+func (sc *outlineScanner) updateSection(sec section) section {
+	// skip if not open or ended
+	if sec.id == 0 || sec.end >= 0 {
+		return sec
+	}
+
+	// end if not within
+	if !sc.within(sec) {
+		sec.end = sc.block.Offset()
+		sec.body.end = sec.end
+		return sec
+	}
+
+	// trim initial Blank from body
+	if id := sc.block.HeadID(); id == sec.id+1 {
+		if b, _ := sc.block.Head(); b.Type == scandown.Blank {
+			sec.body.start = sc.block.Offset() + int64(len(sc.Bytes()))
+		}
+	}
+
+	return sec
+}
