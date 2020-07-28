@@ -627,17 +627,17 @@ func coalesceSpace(dst, src []byte) (n int) {
 
 // Offset returns the current scanned stream offset, where the currently
 // scanned token starts.
-func (blocks *BlockStack) Offset() (n int) {
+func (blocks *BlockStack) Offset() (n int64) {
 	// the Document node tracks total stream offset
 	if len(blocks.block) > 0 && blocks.block[0].Type == Document {
 		if docOffset := blocks.offset[0]; docOffset < 0 {
-			n += -(docOffset + 1)
+			n += -(int64(docOffset) + 1)
 		}
 	}
 	// any final non-negative offsets is about to be pruned
 	if len(blocks.offset) > 0 {
 		if offset := blocks.offset[0]; offset >= 0 {
-			n += offset
+			n += int64(offset)
 		}
 	}
 	return n
