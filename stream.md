@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-26
+# 2020-07-28
 
 ## TODO
 
@@ -83,10 +83,34 @@ Next up are two tracks in tandem:
 
 - [cmd/soc]
   - init command
-  - today rollover
   - delete cmd/poc; cleanup
 
 ## Done
+
+- [cmd/soc]
+  - [dev] today rollover works
+    - totally refactored around minimal range copying via `io.ReaderAt`
+    - complete with a partially implemented range list
+    - with a `type presentDay struct` which should help for future today interactions
+
+# 2020-07-27
+
+- [scandown]
+  - return int64 offsets, easing use with `os` routines
+  - split `BlockStack.ID()` from `BlockStack.Block()` since most uses only want
+    one or the other
+
+- [cmd/soc]
+  - increased ui write chunk sizes, rather than write every line
+  - [dev] iterating on store io convenience routines
+  - [dev] broke outline module out of list, to ease iteration alongside today
+    command
+    - factored out `outlineScanner`
+    - improved debug formatting
+    - more general heading check function
+    - added structured section offset tracking
+
+# 2020-07-26
 
 - [cmd/soc]
   - released the list command prototype with initial ui/testing/storage infra
