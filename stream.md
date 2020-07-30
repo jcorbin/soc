@@ -32,7 +32,7 @@ Next up are two tracks in tandem:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-28
+# 2020-07-31
 
 ## TODO
 
@@ -84,8 +84,43 @@ Next up are two tracks in tandem:
 - [cmd/soc]
   - init command
   - delete cmd/poc; cleanup
+  - [dev] test and finish the today command
 
 ## Done
+
+# 2020-07-30
+
+- added `socutil.CopySection`: will be the basis for stream
+  updating as we write bit of new content within prior
+- added `socutil.WriteBuffer.Break`: eases things like "make
+  sure the main content is broken off from any prior head notes"
+  when writing a `socui.Response`
+- added `scanio.ByteTokens.Extend`: eases initalization and
+  growth use cases along side a normal slice
+  - TODO consider just refactoring around a normal `[]T` rather
+    than continue to implement a continer `T`
+- [cmd/soc]
+  - revamped test framework
+    - extensible strings and line-oriented expectations, with regexp matching support
+    - improved sub-test auto naming feature
+  - added log state management, used to incorporate logs into a
+    `socui.Response` with a prefix ( e.g. blockquote )
+  - [dev] the today command now works, and is tested; many
+    updates to the outline module:
+    - fixed several minor bugs in section scan state
+    - refactored around another `byteRange` type, this time a
+      basis for `section` ranges
+      - This simplified today update greatly over a `remnants
+        []byteRange` that starts out containing the entire stream
+        range. Processing then proceeds to copy/subtract scanned
+        ranges from `remnants`, and in the end simply "copies all
+        remaining bytes". This gives us a rather robust approach
+        that isn't prone to easily loosing prior content.
+      - TODO would like to eventually unify this with the
+        `byteRange` inside `scanio`, maybe using a file-backed
+        arena which could mostly replace `type readState struct`
+
+# 2020-07-28
 
 - [cmd/soc]
   - [dev] today rollover works
