@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/jcorbin/soc/internal/socui"
+	"github.com/jcorbin/soc/internal/socutil"
 )
 
 const streamFileName = "stream.md"
@@ -83,4 +84,8 @@ func (st *logState) setOutput(out io.Writer) *logState {
 	log.SetOutput(out)
 	st.out = out
 	return st
+}
+
+func (st *logState) addPrefix(prefix string) *logState {
+	return st.setOutput(socutil.PrefixWriter(prefix, st.out))
 }
