@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -50,4 +51,36 @@ func findFileFromWD(wd, name string) (string, os.FileInfo) {
 		}
 	}
 	return filepath.Join(wd, name), nil
+}
+
+var logs logState
+
+func init() { logs.setOutput(os.Stderr) }
+
+type logState struct {
+	out   io.Writer
+	flags int
+}
+
+func (st logState) restore() func() {
+	return func() {
+		if st.out == nil {
+			st.out = os.Stderr
+		}
+		log.SetOutput(st.out)
+		log.SetFlags(st.flags)
+		logs = st
+	}
+}
+
+func (st *logState) setFlags(flags int) *logState {
+	log.SetFlags(flags)
+	st.flags = flags
+	return st
+}
+
+func (st *logState) setOutput(out io.Writer) *logState {
+	log.SetOutput(out)
+	st.out = out
+	return st
 }
