@@ -46,6 +46,28 @@ func Test_ui(t *testing.T) {
 			"",
 		),
 
+		cmd([]string{"today"}, expectLines(
+			"Created new Today section at top of stream",
+			"",
+			"# 2020-07-23",
+			"",
+			"## TODO",
+			"",
+			"## WIP",
+			"",
+			"## Done",
+		)),
+		expectStream(expectLines(
+			"# 2020-07-23",
+			"",
+			"## TODO",
+			"",
+			"## WIP",
+			"",
+			"## Done",
+			"",
+		)),
+
 		// TODO use commands to build up to this, rather than faking
 		fakeStream("for list",
 			"# 2020-07-23\n",
@@ -64,6 +86,33 @@ func Test_ui(t *testing.T) {
 			"2. [2020-07-23] WIP",
 			"3. [2020-07-23] Done",
 			"4. [2020-07-22] different things",
+		)),
+
+		// tomorrow
+		24*time.Hour,
+		cmd([]string{"today"}, expectLines(
+			`Created Today by rolling "[2020-07-23]" forward`,
+			"",
+			"# 2020-07-24",
+			"",
+			"## TODO",
+			"- the other thing",
+			"## WIP",
+			"- that",
+			"## Done",
+		)),
+		expectStream(expectLines(
+			"# 2020-07-24",
+			"",
+			"## TODO",
+			"- the other thing",
+			"## WIP",
+			"- that",
+			"## Done",
+			"# 2020-07-23",
+			"- this",
+			"# 2020-07-22",
+			"- different things",
 		)),
 	)
 }
