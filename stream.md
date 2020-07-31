@@ -1,5 +1,21 @@
-Status: Unusable Early Prototype
+Status: Early Prototype, not yet viable
 ===
+
+The main `soc` command is shaping up, things that work:
+- a `help` system
+- a `list` command that prints outline items
+- a `today` command that rolls time forward and prints the current day
+
+Next up is to implement actual TODO/WIP/Done item manipulation, which should
+get us to a viable tool for daily usage.
+
+After `soc` reaches that phase, finishing off and spinning out `scandown` can
+commence. Am considering shipping a ReaderAt-backed version of the
+`internal/scanio.ByteArena` along with it to ease application needs to retain
+or reference.
+
+Scandown
+---
 
 After partially implementing a proof-of-concept outline printer, became
 disenchanted with all extant AST-oriented Go markdown libraries. Especially
@@ -24,11 +40,6 @@ The first half of `scandown` is now prototyped:
   NOTE: in particular, memory overhead does **not** scale with file size.
 - see or run [`cmd/scanex/main.go`](cmd/scanex/main.go) for example usage
 - has only been manually tested/verified against this `stream.md` file
-
-Next up are two tracks in tandem:
-1. start implementing `soc` in earnest, now that we have `scandown`
-2. finish `scandown`: phase 2 inline parsing, an HTML renderer, and then tests
-   ( leaning heavily on the commonmark spec conformance tests )
 
 --------------------------------------------------------------------------------
 
