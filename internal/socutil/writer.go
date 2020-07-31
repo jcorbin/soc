@@ -56,6 +56,21 @@ type FlushPolicyFunc func(b []byte) int
 // ShouldFlush calls the receiver function pointer.
 func (f FlushPolicyFunc) ShouldFlush(b []byte) int { return f(b) }
 
+// Break ensure that any prior paragraph in the buffer has been terminated with
+// a double newline.
+func (buf *WriteBuffer) Break() (err error) {
+	b := buf.Bytes()
+	if i := len(b) - 1; i > 0 {
+		if b[i] != '\n' {
+			err = buf.WriteByte('\n')
+		}
+		if b[i-1] != '\n' {
+			err = buf.WriteByte('\n')
+		}
+	}
+	return err
+}
+
 // Flush attempt to wrtie all of the receiver buffer contents, irregardless of
 // the FlushPolicy.
 // Should be called after the main write phase.
