@@ -84,9 +84,14 @@ Next up are two tracks in tandem:
 - [cmd/soc]
   - init command
   - delete cmd/poc; cleanup
-  - [dev] test and finish the today command
 
 ## Done
+
+- [cmd/soc]
+  - collected io plumbing out of dev today command into `store.go`
+    TODO refactor the `ReaderAt`/`byteRange` side into scanio
+  - released today command with the majorly revamped outline scanner
+  - test and finish the today command
 
 # 2020-07-30
 
