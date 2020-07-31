@@ -73,7 +73,7 @@ func fakeStream(name string, parts ...string) uiTestStep {
 	} else {
 		name = "fake stream: " + name
 	}
-	return named{name, uiTestSteps{
+	return named{name, true, uiTestSteps{
 		withStorage{&ms},
 		expectStream(content),
 	}}
@@ -108,11 +108,16 @@ func (tc *uiTestCompiler) compile(args ...interface{}) (uiTestStep, error) {
 		case store: // set storage (stream content)
 			tc.add(withStorage{val})
 		case uiTestArgs: // auto-name toplevel commands
-			if tc.head().name == "" {
-				tc.add(named{fmt.Sprintf("cmd: %q", val.args), val})
-			} else {
-				tc.add(val)
+			for tc.head().auto {
+				tc.pop()
 			}
+			if tc.head().name == "" {
+				tc.auto(fmt.Sprintf("cmd: %q", val.args))
+			}
+			tc.add(val)
+		case expectStream: // auto-name stream expectations
+			tc.auto("stream")
+			tc.add(val)
 		case uiTestStep: // any piece of test logic
 			tc.add(val)
 
@@ -196,6 +201,7 @@ func (ta uiTestArgs) run(t *uiTestContext) {
 
 type named struct {
 	name string
+	auto bool
 	uiTestStep
 }
 
@@ -245,7 +251,10 @@ type uiTestCompiler struct {
 }
 
 func (tc *uiTestCompiler) head() named {
-	return tc.stack[len(tc.stack)-1]
+	if i := len(tc.stack) - 1; i >= 0 {
+		return tc.stack[i]
+	}
+	return named{}
 }
 
 func (tc *uiTestCompiler) add(step uiTestStep) {
@@ -254,6 +263,10 @@ func (tc *uiTestCompiler) add(step uiTestStep) {
 	} else {
 		tc.stack = append(tc.stack, named{uiTestStep: step})
 	}
+}
+
+func (tc *uiTestCompiler) auto(name string) {
+	tc.stack = append(tc.stack, named{name: name, auto: true})
 }
 
 func (tc *uiTestCompiler) push(name string) {
