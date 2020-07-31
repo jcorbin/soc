@@ -18,13 +18,18 @@ func init() {
 		"print stream outline listing")
 }
 
-func serveList(ctx context, _ *socui.Request, resp *socui.Response) error {
+func serveList(ctx context, _ *socui.Request, resp *socui.Response) (rerr error) {
 	rc, err := ctx.store.open()
 	if errors.Is(err, errStoreNotExists) {
 		return fmt.Errorf("%w; run `soc init` to create one", err)
 	} else if err != nil {
 		return err
 	}
+	defer func() {
+		if cerr := rc.Close(); rerr == nil {
+			rerr = cerr
+		}
+	}()
 
 	var blocks scandown.BlockStack
 	sc := bufio.NewScanner(rc)
@@ -44,7 +49,7 @@ func serveList(ctx context, _ *socui.Request, resp *socui.Response) error {
 		}
 	}
 
-	return rc.Close()
+	return nil
 }
 
 type outline struct {
