@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,29 +16,34 @@ import (
 )
 
 func Test_ui(t *testing.T) {
+	expectAvail := expectLines(
+		"## Available Commands",
+		starLines(
+			regexp.MustCompile(`^- \w+\s*:.*$`),
+		),
+	)
+
 	runUITest(t,
 		time.Date(2020, 7, 23, 1, 2, 3, 0, time.UTC),
 
-		cmd(nil,
-			"# Usage\n",
-			"> socTest [command args...]\n",
-			"\n",
-			"## Available Commands\n",
-			"- help: show help overview or on a specific topic or command\n",
-			"- list: print stream outline listing\n",
-		),
+		cmd(nil, expectLines(
+			"# Usage",
+			"> socTest [command args...]",
+			"",
+			expectAvail,
+		)),
 
-		cmd([]string{"help"},
-			"# Usage\n",
-			"> socTest help [command]\n",
-			"\n",
-			"## Available Commands\n",
-			"- help: show help overview or on a specific topic or command\n",
-			"- list: print stream outline listing\n",
-		),
+		cmd([]string{"help"}, expectLines(
+			"# Usage",
+			"> socTest help [command]",
+			"",
+			expectAvail,
+		)),
 
 		cmd([]string{"list"},
+			// TODO maybe should be ok empty; no init?
 			errors.New("stream does not exist; run `soc init` to create one"),
+			"",
 		),
 
 		// TODO use commands to build up to this, rather than faking
@@ -52,12 +59,12 @@ func Test_ui(t *testing.T) {
 			"- different things\n",
 		),
 
-		cmd([]string{"list"},
-			"1. [2020-07-23] TODO\n",
-			"2. [2020-07-23] WIP\n",
-			"3. [2020-07-23] Done\n",
-			"4. [2020-07-22] different things\n",
-		),
+		cmd([]string{"list"}, expectLines(
+			"1. [2020-07-23] TODO",
+			"2. [2020-07-23] WIP",
+			"3. [2020-07-23] Done",
+			"4. [2020-07-22] different things",
+		)),
 	)
 }
 
@@ -115,7 +122,7 @@ func (tc *uiTestCompiler) compile(args ...interface{}) (uiTestStep, error) {
 				tc.auto(fmt.Sprintf("cmd: %q", val.args))
 			}
 			tc.add(val)
-		case expectStream: // auto-name stream expectations
+		case streamExpecter: // auto-name stream expectations
 			tc.auto("stream")
 			tc.add(val)
 		case uiTestStep: // any piece of test logic
@@ -144,9 +151,13 @@ func (ws withStorage) run(t *uiTestContext) {
 	t.store = ws.store
 }
 
-type expectStream string
+func expectStream(expectArgs ...interface{}) streamExpecter {
+	return streamExpecter{expect(expectArgs...)}
+}
 
-func (expect expectStream) run(t *uiTestContext) {
+type streamExpecter struct{ stringExpecter }
+
+func (se streamExpecter) run(t *uiTestContext) {
 	var buf bytes.Buffer
 	if t.store == nil {
 		buf.WriteString("<Store Is Nil>")
@@ -157,7 +168,7 @@ func (expect expectStream) run(t *uiTestContext) {
 		require.NoError(t, err, "must read stream")
 		require.NoError(t, rc.Close(), "must read stream")
 	}
-	assert.Equal(t, string(expect), buf.String(), "expected stream content")
+	se.expect(t, buf.String())
 }
 
 type then time.Time
@@ -166,25 +177,212 @@ type elapse time.Duration
 func (tm then) run(t *uiTestContext)  { t.now = time.Time(tm) }
 func (d elapse) run(t *uiTestContext) { t.now = t.now.Add(time.Duration(d)) }
 
-func cmd(args []string, expect ...interface{}) (ta uiTestArgs) {
+func cmd(args []string, expectArgs ...interface{}) (ta uiTestArgs) {
 	ta.args = args
-	for _, e := range expect {
+	for _, e := range expectArgs {
 		switch v := e.(type) {
-		case string:
-			ta.output += v
 		case error:
 			if ta.err != nil {
 				panic("cmd already has an expected error ")
 			}
 			ta.err = v
+		default:
+			ta.output = expect(ta.output, v)
 		}
 	}
 	return ta
 }
 
+type stringExpecter interface {
+	expect(t testing.TB, s string)
+}
+
+type lineExpecter interface {
+	expectLine(t testing.TB, n int, lines []string) []string
+}
+
+type stringExpecters []stringExpecter
+type expectString string
+type expectRegexp struct{ pattern *regexp.Regexp }
+type anything struct{}
+
+var expectAny = anything{}
+
+type lineExpecters []lineExpecter
+
+func expect(args ...interface{}) stringExpecter {
+	var es stringExpecters
+	var le stringExpecter
+	for _, arg := range args {
+		var ne stringExpecter
+		switch v := arg.(type) {
+		case nil:
+			continue
+
+		case string:
+			if es, ok := le.(expectString); ok {
+				le = expectString(string(es) + v)
+				continue
+			}
+			ne = expectString(v)
+
+		case *regexp.Regexp:
+			ne = expectRegexp{v}
+
+		case stringExpecter:
+			ne = v
+
+		default:
+			panic(fmt.Sprintf("invalid expect arg type %T", arg))
+		}
+		if le != nil {
+			es = append(es, le)
+		}
+		le = ne
+	}
+	if len(es) == 0 {
+		return le
+	}
+	return append(es, le)
+}
+
+func expectLines(args ...interface{}) (ls lineExpecters) {
+	for _, arg := range args {
+		var e lineExpecter
+		switch v := arg.(type) {
+		case nil:
+			continue
+
+		case string:
+			e = expectString(v)
+
+		case *regexp.Regexp:
+			e = expectRegexp{v}
+
+		case lineExpecter:
+			e = v
+
+		case lineExpecters:
+			ls = append(ls, v...)
+			continue
+
+		default:
+			panic(fmt.Sprintf("invalid expectLines arg type %T", arg))
+		}
+		ls = append(ls, e)
+	}
+	return ls
+}
+
+func starLines(args ...interface{}) lineExpecter {
+	switch ls := expectLines(args...); len(ls) {
+	case 0:
+		return nil
+	case 1:
+		return lineStar{ls[0]}
+	default:
+		return lineStar{ls}
+	}
+}
+
+type lineStar struct{ lineExpecter }
+
+func (star lineStar) expectLine(t testing.TB, n int, lines []string) []string {
+	for len(lines) > 0 {
+		var tmp testing.T
+		r := star.lineExpecter.expectLine(&tmp, n, lines)
+		if len(r) == len(lines) {
+			break
+		}
+		rest := star.lineExpecter.expectLine(t, n, lines)
+		if len(rest) == len(lines) {
+			break
+		}
+		n += len(lines) - len(rest)
+		lines = rest
+	}
+	return lines
+}
+
+func (es stringExpecters) expect(t testing.TB, s string) {
+	for _, e := range es {
+		e.expect(t, s)
+	}
+}
+
+func (es expectString) expect(t testing.TB, s string) {
+	assert.Equal(t, string(es), s, "expected output")
+}
+
+func (es expectString) expectLine(t testing.TB, n int, lines []string) []string {
+	if assert.Equal(t, string(es), lines[0], "expected line #%v", n) {
+		return lines[1:]
+	}
+	return lines
+}
+
+func (er expectRegexp) expect(t testing.TB, s string) {
+	assert.Regexp(t, er.pattern, s, "expected output")
+}
+
+func (er expectRegexp) expectLine(t testing.TB, n int, lines []string) []string {
+	if assert.Regexp(t, er.pattern, lines[0], "expected line #%v", n) {
+		return lines[1:]
+	}
+	return lines
+}
+
+func (anything) expect(t testing.TB, s string)                           {}
+func (anything) expectLine(t testing.TB, n int, lines []string) []string { return lines[1:] }
+
+func (ls lineExpecters) expect(t testing.TB, s string) {
+	lines := strings.Split(s, "\n")
+	if i := len(lines) - 1; i > 0 && lines[i] == "" {
+		lines = lines[:i]
+	}
+	n, rest := 1, lines
+	if !runTB("lines", t, func(t testing.TB) {
+		rest = ls.expectLine(t, n, rest)
+	}) {
+		m := n + len(lines) - len(rest)
+		for i := 0; i <= len(lines); i++ {
+			line := "<EOF>"
+			if i < len(lines) {
+				line = lines[i]
+			}
+			ln := n + i
+			status := "?"
+			if ln < m {
+				status = "OK"
+			} else if ln == m {
+				status = "FAIL"
+			}
+			t.Logf("% 4v #%v: %v", status, ln, line)
+		}
+	}
+}
+
+func (ls lineExpecters) expectLine(t testing.TB, n int, lines []string) (rest []string) {
+	rest = lines
+	for i := 0; i < len(ls); i++ {
+		if len(rest) == 0 {
+			assert.Fail(t, "unexpected end of lines", "line #%v", n)
+			break
+		}
+		rem := ls[i].expectLine(t, n, rest)
+		if len(rem) != len(rest) {
+			n += len(rest) - len(rem)
+			rest = rem
+		} else if t.Failed() {
+			break
+		}
+	}
+	return rest
+}
+
 type uiTestArgs struct {
 	args   []string
-	output string
+	output stringExpecter
 	err    error
 }
 
@@ -196,7 +394,9 @@ func (ta uiTestArgs) run(t *uiTestContext) {
 	} else {
 		require.NoError(t, err, "unexpected error")
 	}
-	assert.Equal(t, ta.output, out.String(), "expected output")
+	if ta.output != nil {
+		ta.output.expect(t, out.String())
+	}
 }
 
 type named struct {
@@ -294,4 +494,18 @@ func (tc *uiTestCompiler) fin() uiTestStep {
 		return ztep
 	}
 	return ztep.uiTestStep
+}
+
+func runTB(name string, t testing.TB, under func(testing.TB)) bool {
+	type testRunner interface {
+		Run(string, func(*testing.T)) bool
+	}
+	if tr, ok := t.(testRunner); ok {
+		return tr.Run(name, func(t *testing.T) { under(t) })
+	} else if t.Failed() {
+		return false
+	} else {
+		under(t)
+		return !t.Failed()
+	}
 }
