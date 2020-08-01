@@ -20,7 +20,7 @@ func init() {
 }
 
 func serveToday(ctx context, req *socui.Request, res *socui.Response) (rerr error) {
-	var pres presentDay
+	var pres presentDay // TODO bake into ctx context
 	defer func() {
 		if cerr := pres.Close(); rerr == nil {
 			rerr = cerr

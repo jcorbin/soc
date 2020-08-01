@@ -43,7 +43,7 @@ The first half of `scandown` is now prototyped:
 
 --------------------------------------------------------------------------------
 
-# 2020-07-31
+# 2020-08-01
 
 ## TODO
 
@@ -72,10 +72,6 @@ The first half of `scandown` is now prototyped:
     - tail/leaf may be unmatched, used by context: e.g. to add a new item using
       matched prior structure
     - prior command state, like the ability to reference the last affected item
-  - [triggers] for item lifecycle
-    - addition: `todo/wip/done ...`
-    - movement: `todo/wip/done ...` [needs: matching]
-    - remove: `drop todo/wip/done ...`
   - [config]
     - custom trigger terms
     - custom phases
@@ -93,10 +89,22 @@ The first half of `scandown` is now prototyped:
 ## WIP
 
 - [cmd/soc]
-  - init command
-  - delete cmd/poc; cleanup
+  - subsume `presentDay` into `context`, while broadening out to item
+    manipulation commands
+  - [triggers] for item lifecycle
+    - addition: `todo/wip/done ...`
+    - movement: `todo/wip/done ...` [needs: matching]
+    - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [cmd/soc]
+  - deleted `cmd/poc` and 3rd part markdown dependencies
+  - reduced `socutil` package, moving args logic into `socui`, and dropping
+    unused WD walk utility
+  - dropped nascent pointers toward a `soc init`, instead make things just work
+
+# 2020-07-31
 
 - [cmd/soc]
   - collected io plumbing out of dev today command into `store.go`
