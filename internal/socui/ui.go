@@ -77,7 +77,7 @@ func ArgsRequest(now time.Time, args []string) Request {
 				// TODO will need to change for markdown structured commands
 				tmp = append(tmp, '\n')
 			}
-			tmp = socutil.AppendQuotedArgs(tmp, args[i:j])
+			tmp = appendQuotedArgs(tmp, args[i:j])
 			buf.Write(tmp)
 			i = j + 1
 		}
@@ -154,7 +154,7 @@ func (req *Request) ScanArg() bool {
 				return false
 			}
 			req.arg = bufio.NewScanner(bytes.NewReader(req.cmd.Bytes())) // TODO reset-able (bytes)scanner [rescanner]
-			req.arg.Split(socutil.ScanArgs)                              // TODO use [scandown inline] tokenizer before arg splitter
+			req.arg.Split(scanArgs)                                      // TODO use [scandown inline] tokenizer before arg splitter
 		}
 		if req.arg.Scan() {
 			return true
@@ -177,7 +177,7 @@ func (req *Request) Arg() string {
 	if req.arg == nil {
 		return ""
 	}
-	return socutil.UnquoteArg(req.arg.Text())
+	return unquoteArg(req.arg.Text())
 }
 
 // TODO may want to have the raw command tail, un-arg-split [rescanner]

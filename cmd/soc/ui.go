@@ -8,7 +8,6 @@ import (
 	"text/template"
 
 	"github.com/jcorbin/soc/internal/socui"
-	"github.com/jcorbin/soc/internal/socutil"
 )
 
 type context struct {
@@ -94,7 +93,7 @@ func (mux serveMux) help() server {
 }
 
 func (ctx context) Command() string {
-	return string(socutil.QuotedArgs(ctx.args))
+	return string(socui.QuotedArgs(ctx.args))
 }
 
 func (ctx context) CommandHead() string {

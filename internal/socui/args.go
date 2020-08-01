@@ -1,4 +1,4 @@
-package socutil
+package socui
 
 import (
 	"strconv"
@@ -15,12 +15,10 @@ func QuotedArgs(args []string) []byte {
 		n += 2 * len(arg)
 	}
 	b := make([]byte, 0, n)
-	return AppendQuotedArgs(b, args)
+	return appendQuotedArgs(b, args)
 }
 
-// AppendQuotedArgs appends each elemenet of args, quoting them with strconv if
-// they contain a space.
-func AppendQuotedArgs(b []byte, args []string) []byte {
+func appendQuotedArgs(b []byte, args []string) []byte {
 	first := true
 	for _, arg := range args {
 		if first {
@@ -37,8 +35,7 @@ func AppendQuotedArgs(b []byte, args []string) []byte {
 	return b
 }
 
-// ScanArgs implements a bufio.SplitFunc that will scan optionally quted arg tokens.
-func ScanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
+func scanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// Skip leading spaces.
 	start := 0
 	var r rune
@@ -81,8 +78,7 @@ func ScanArgs(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	return start, nil, nil
 }
 
-// UnquoteArg returns an unquoted copy of arg if it quoted, or arg itself otherwise.
-func UnquoteArg(arg string) string {
+func unquoteArg(arg string) string {
 	if len(arg) < 2 || (arg[0] != '"' && arg[0] != '\'') {
 		return arg
 	}
