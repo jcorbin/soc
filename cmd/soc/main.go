@@ -41,8 +41,6 @@ func main() {
 	}
 }
 
-// TODO drop socutil.FindWDFile post poc
-
 func findFileFromWD(wd, name string) (string, os.FileInfo) {
 	// TODO should we apply a limit to how far up we'll go?
 	for dir := wd; len(dir) > 0; dir = filepath.Dir(dir) {
