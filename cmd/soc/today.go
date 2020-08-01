@@ -284,17 +284,18 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 				// add any missing sub-sections
 				fmt.Fprintf(cs, "## %v\n\n", name)
 			} else if !todaySectionRemains[i] {
-				// carry forward non-remnant yesterday sub-section content (e.g. TODO and WIP)
+				// carry forward non-remnant sub-sections (e.g. TODO and WIP)
 				cs.copySection(sec.byteRange)
 				remnants.sub(sec.byteRange)
 			} else {
-				// leave remnant content behind (e.g. Done and other day content)
+				// leave remnant sections behind (e.g. Done)
 
 				// copy the yesterday sub-header into today
 				header := sec.header()
 				cs.copySection(header)
 
-				// elide yesterday sub-header if it would start out the remnant
+				// elide yesterday sub-header if it would start out the remnant;
+				// i.e. this erases the "## Done" header inside each day
 				if !remnants[0].intersect(header).empty() || remnants[1].start == header.start {
 					// TODO more configurable header elision/replacement?
 					remnants.sub(header)
