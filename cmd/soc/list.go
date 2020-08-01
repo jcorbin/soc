@@ -12,10 +12,12 @@ func init() {
 		"print stream outline listing")
 }
 
-func serveList(ctx context, _ *socui.Request, resp *socui.Response) (rerr error) {
+func serveList(ctx context, _ *socui.Request, res *socui.Response) (rerr error) {
 	rc, err := ctx.store.open()
 	if errors.Is(err, errStoreNotExists) {
-		return fmt.Errorf("%w; run `soc init` to create one", err)
+		fmt.Fprintf(res, "stream is empty, run `%v today` to initialize\n", ctx.args[0])
+		fmt.Fprintf(res, "... or just start adding items with `%v <todo|wip|done> ...`\n", ctx.args[0])
+		return nil
 	} else if err != nil {
 		return err
 	}
@@ -40,7 +42,7 @@ func serveList(ctx context, _ *socui.Request, resp *socui.Response) (rerr error)
 			continue
 		}
 		n++
-		fmt.Fprintf(resp, "%v. %v\n", n, sc)
+		fmt.Fprintf(res, "%v. %v\n", n, sc)
 	}
 
 	return nil

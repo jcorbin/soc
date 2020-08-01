@@ -309,9 +309,8 @@ func builtinHelpTopic(name string, srv interface{}) {
 
 // TODO builtinHelpTopic("stream")
 // TODO builtinHelpTopic("matching")
-// TODO some sort of better builtinServer("", ...): prompt to init if no
-// stream, display an intro on first run, look for -h[elp] flags, display a
-// today summary
+// TODO some sort of better builtinServer("", ...): display a today summarya,
+// an intro on first run, or maybe look for toplevel -h[elp] flags
 
 type ui struct {
 	context

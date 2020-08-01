@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -40,11 +39,10 @@ func Test_ui(t *testing.T) {
 			expectAvail,
 		)),
 
-		cmd([]string{"list"},
-			// TODO maybe should be ok empty; no init?
-			errors.New("stream does not exist; run `soc init` to create one"),
-			"",
-		),
+		cmd([]string{"list"}, expectLines(
+			"stream is empty, run `socTest today` to initialize",
+			"... or just start adding items with `socTest <todo|wip|done> ...`",
+		)),
 
 		cmd([]string{"today"}, expectLines(
 			"Created new Today section at top of stream",
