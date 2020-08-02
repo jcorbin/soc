@@ -11,7 +11,6 @@ import (
 	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/jcorbin/soc/internal/scanio"
 	"github.com/jcorbin/soc/internal/socui"
-	"github.com/jcorbin/soc/internal/socutil"
 )
 
 func init() {
@@ -36,7 +35,7 @@ func serveToday(ctx context, req *socui.Request, res *socui.Response) (rerr erro
 	// arena, we could avoid these read(s) and buffer alloc
 	res.Break()
 	today := pres.sections[todaySection]
-	_, err := socutil.CopySection(res, pres.ReadAtCloser, today.start, today.end-today.start, nil)
+	_, err := pres.writeSectionsInto(res, today.byteRange)
 	return err
 }
 
@@ -225,9 +224,8 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 			return nil
 		}
 	}
-
 	// under a pending atomic update
-	return pres.update(st, func(cs *copyState) error {
+	return pres.update(st, func(w io.Writer) error {
 		// write the user a message on the way out
 		defer func() {
 			if pres.sections[yesterdaySection].id != 0 {
@@ -245,18 +243,18 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 		if all := (byteRange{0, pres.size}); !all.empty() {
 			remnants = append(remnants, all)
 		}
-		defer func() { cs.copySections(remnants...) }()
+		defer func() { pres.writeSectionsInto(w, remnants...) }()
 
 		// if we found yesterday, cut stream content in half before/after its
 		// head, and then copy the head
 		if sec := pres.sections[yesterdaySection]; sec.id != 0 {
 			head, _ := remnants[0].sub(sec.headPoint())
-			cs.copySection(head)
+			pres.writeSectionsInto(w, head)
 			remnants.sub(head)
 		}
 
 		// write the new today section header
-		fmt.Fprintf(cs, "# %v\n\n", pres.today)
+		fmt.Fprintf(w, "# %v\n\n", pres.today)
 
 		// process each today sub-section, creating or carrying it forward
 		for i, name := range todaySectionNames {
@@ -267,17 +265,17 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 
 			if sec.id == 0 {
 				// add any missing sub-sections
-				fmt.Fprintf(cs, "## %v\n\n", name)
+				fmt.Fprintf(w, "## %v\n\n", name)
 			} else if !todaySectionRemains[i] {
 				// carry forward non-remnant sub-sections (e.g. TODO and WIP)
-				cs.copySection(sec.byteRange)
+				pres.writeSectionsInto(w, sec.byteRange)
 				remnants.sub(sec.byteRange)
 			} else {
 				// leave remnant sections behind (e.g. Done)
 
 				// copy the yesterday sub-header into today
 				header := sec.header()
-				cs.copySection(header)
+				pres.writeSectionsInto(w, header)
 
 				// elide yesterday sub-header if it would start out the remnant;
 				// i.e. this erases the "## Done" header inside each day
@@ -299,15 +297,12 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 // Otherwise the completed temporary data will replace the prior stream
 // content, and presentDay.load() will be called to reload the newly written
 // state.
-func (pres *presentDay) update(st store, with func(cs *copyState) error) (rerr error) {
+func (pres *presentDay) update(st store, with func(w io.Writer) error) (rerr error) {
 	if pres.ReadAtCloser == nil {
 		if err := pres.load(st); err != nil && !errors.Is(err, errStoreNotExists) {
 			return err
 		}
 	}
-
-	var cs copyState
-	cs.readState = pres.readState
 
 	cwc, err := st.update()
 	if errors.Is(err, errStoreNotExists) {
@@ -316,13 +311,11 @@ func (pres *presentDay) update(st store, with func(cs *copyState) error) (rerr e
 	if err != nil {
 		return err
 	}
-	cs.w = cwc
+	var ws writeState
+	ws.w = cwc
 	defer func() {
 		if rerr == nil {
-			rerr = cs.readState.err
-		}
-		if rerr == nil {
-			rerr = cs.writeState.err
+			rerr = ws.err
 		}
 		if rerr == nil {
 			rerr = cwc.Close()
@@ -335,5 +328,5 @@ func (pres *presentDay) update(st store, with func(cs *copyState) error) (rerr e
 		}
 	}()
 
-	return with(&cs)
+	return with(&ws)
 }

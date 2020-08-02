@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"errors"
-	"github.com/jcorbin/soc/internal/socutil"
 	"io"
 	"io/ioutil"
 	"os"
@@ -397,8 +396,9 @@ func (br byteRange) sub(other byteRange) (head, tail byteRange) {
 // TODO eventually unify readState/byteRange into a file-backed scanio arena
 type readState struct {
 	ReadAtCloser
-	size int64
-	err  error
+	size    int64
+	copyBuf []byte
+	err     error
 }
 
 func (rs *readState) ReadAt(p []byte, off int64) (n int, err error) {
@@ -433,6 +433,43 @@ func (rs *readState) Size() int64 {
 	return rs.size
 }
 
+func (rs *readState) writeSectionsInto(dst io.Writer, secs ...byteRange) (written int64, err error) {
+	if rs.err != nil {
+		return 0, rs.err
+	}
+
+	if rs.copyBuf == nil {
+		rs.copyBuf = make([]byte, 32*1024)
+	}
+
+	for _, sec := range secs {
+		for off, limit := sec.start, sec.end; off < limit; {
+			p := rs.copyBuf
+			if max := int(limit - off); len(p) > max {
+				p = p[:max]
+			}
+			nr, er := rs.ReadAt(p, off)
+			off += int64(nr)
+			if p = p[:nr]; len(p) > 0 {
+				nw, ew := dst.Write(p)
+				written += int64(nw)
+				if ew != nil {
+					return written, ew
+				}
+				if nw != nr {
+					return written, io.ErrShortWrite
+				}
+			}
+			if er == io.EOF {
+				break
+			} else if er != nil {
+				return written, er
+			}
+		}
+	}
+	return written, nil
+}
+
 func (rs *readState) open(rc io.ReadCloser, err error) error {
 	if errors.Is(err, errStoreNotExists) {
 		return nil
@@ -463,46 +500,4 @@ func (ws *writeState) WriteString(s string) (n int, err error) {
 		ws.err = err
 	}
 	return n, err
-}
-
-type copyState struct {
-	readState
-	writeState
-	copyBuf []byte
-}
-
-func (cs *copyState) init() {
-	if cs.copyBuf == nil {
-		cs.copyBuf = make([]byte, 32*1024)
-	}
-}
-
-func (cs *copyState) copySection(br byteRange) error {
-	if cs.readState.err != nil {
-		return cs.readState.err
-	}
-	if cs.writeState.err != nil {
-		return cs.writeState.err
-	}
-	cs.init()
-	// TODO CopySection just turns around and recomputes end...
-	_, err := socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf)
-	return err
-}
-
-func (cs *copyState) copySections(brs ...byteRange) error {
-	if cs.readState.err != nil {
-		return cs.readState.err
-	}
-	if cs.writeState.err != nil {
-		return cs.writeState.err
-	}
-	cs.init()
-	for _, br := range brs {
-		// TODO CopySection just turns around and recomputes end...
-		if _, err := socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf); err != nil {
-			return err
-		}
-	}
-	return nil
 }
