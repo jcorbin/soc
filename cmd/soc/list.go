@@ -12,7 +12,7 @@ func init() {
 		"print stream outline listing")
 }
 
-func serveList(ctx context, _ *socui.Request, res *socui.Response) (rerr error) {
+func serveList(ctx *context, _ *socui.Request, res *socui.Response) (rerr error) {
 	rc, err := ctx.store.open()
 	if errors.Is(err, errStoreNotExists) {
 		fmt.Fprintf(res, "stream is empty, run `%v today` to initialize\n", ctx.args[0])

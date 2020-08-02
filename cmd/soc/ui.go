@@ -17,7 +17,7 @@ type context struct {
 }
 
 type server interface {
-	serve(context, *socui.Request, *socui.Response) error
+	serve(*context, *socui.Request, *socui.Response) error
 }
 
 type helpServer interface {
@@ -26,7 +26,7 @@ type helpServer interface {
 	help() server
 }
 
-type serverFunc func(context, *socui.Request, *socui.Response) error
+type serverFunc func(*context, *socui.Request, *socui.Response) error
 
 type serverHelp struct {
 	server
@@ -34,7 +34,7 @@ type serverHelp struct {
 	h server
 }
 
-func (fn serverFunc) serve(ctx context, req *socui.Request, res *socui.Response) error {
+func (fn serverFunc) serve(ctx *context, req *socui.Request, res *socui.Response) error {
 	return fn(ctx, req, res)
 }
 
@@ -50,9 +50,9 @@ type tmplServer struct {
 	tmpl *template.Template
 }
 
-func (srv tmplServer) serve(ctx context, req *socui.Request, res *socui.Response) error {
+func (srv tmplServer) serve(ctx *context, req *socui.Request, res *socui.Response) error {
 	return srv.tmpl.Execute(res, struct {
-		Ctx context
+		Ctx *context
 	}{ctx})
 }
 
@@ -143,7 +143,7 @@ func (mux serveMux) helpTopics() serveMux {
 	return topics
 }
 
-func (mux serveMux) serve(ctx context, req *socui.Request, res *socui.Response) error {
+func (mux serveMux) serve(ctx *context, req *socui.Request, res *socui.Response) error {
 	any := false
 	for req.Scan() && req.ScanArg() {
 		any = true
@@ -163,7 +163,7 @@ func (mux serveMux) serve(ctx context, req *socui.Request, res *socui.Response) 
 	return mux.serveHelp(ctx, req, res)
 }
 
-func (mux serveMux) serveCommand(ctx context, req *socui.Request, res *socui.Response) error {
+func (mux serveMux) serveCommand(ctx *context, req *socui.Request, res *socui.Response) error {
 	name := req.Arg()
 	ctx.args = append(ctx.args[:len(ctx.args):len(ctx.args)], name)
 	ctx.mux = mux
@@ -180,7 +180,7 @@ func (mux serveMux) serveCommand(ctx context, req *socui.Request, res *socui.Res
 	return nil
 }
 
-func (mux serveMux) serveHelp(ctx context, req *socui.Request, res *socui.Response) error {
+func (mux serveMux) serveHelp(ctx *context, req *socui.Request, res *socui.Response) error {
 	var name string
 	if req.ScanArg() {
 		name = req.Arg()
@@ -266,10 +266,12 @@ func serve(srv interface{}, args ...interface{}) (actual server) {
 	switch val := srv.(type) {
 	case server:
 		actual = val
-	case func(context, *socui.Request, *socui.Response) error:
+	case func(*context, *socui.Request, *socui.Response) error:
 		actual = serverFunc(val)
 	case string:
 		actual = textServer(val)
+	default:
+		panic(fmt.Sprintf("unsupported serve base arg type %T", srv))
 	}
 	for _, arg := range args {
 		switch val := arg.(type) {
@@ -343,5 +345,8 @@ func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) error {
 			return err
 		}
 	}
-	return ui.mux.serve(ui.context, req, res)
+
+	ctx := ui.context
+
+	return ui.mux.serve(&ctx, req, res)
 }

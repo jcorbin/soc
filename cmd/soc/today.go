@@ -18,7 +18,7 @@ func init() {
 		"print today's section of the stream")
 }
 
-func serveToday(ctx context, req *socui.Request, res *socui.Response) (rerr error) {
+func serveToday(ctx *context, req *socui.Request, res *socui.Response) (rerr error) {
 	var pres presentDay // TODO bake into ctx context
 	defer func() {
 		if cerr := pres.Close(); rerr == nil {
