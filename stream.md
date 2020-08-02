@@ -43,9 +43,7 @@ The first half of `scandown` is now prototyped:
 
 --------------------------------------------------------------------------------
 
-# 2020-08-01
-
-## TODO
+# TODO
 
 - [scandown]
   - write a package level readme and/or doc.go
@@ -55,36 +53,41 @@ The first half of `scandown` is now prototyped:
   - Commonmark spec conformance tests
   - continue to clarify / refactor BlockStack core logic
   - `BlockArena` ? maybe up in internal/md or scandown/x
-
 - [scanio]
-  - [spliter] interfacification of `bufio.SplitFunc`
+  - [spliter] abstraction of `bufio.SplitFunc`
   - [bytescanner] drive a splitter over an in-memory `[]byte`
   - [rescanner] evolution of `bufio.Scanner` that can seek and/or have its
     reader swapped
     - paired with a [splitter] extension to notify it of the discontinuity
-
-- future/upcoming
-- tagged item relations
-- [cmd/soc]
-  - [matching] prototype under the list command to limit what is shown
-    - based around the outline walker
-    - only match on the first paragraph; maybe syntax to deepen beyond
-    - tail/leaf may be unmatched, used by context: e.g. to add a new item using
-      matched prior structure
-    - prior command state, like the ability to reference the last affected item
-  - [config]
-    - custom trigger terms
-    - custom phases
-    - custom commands?
-  - [model] once matching and item triggers are done, the boundary of a
-    reasonable "stream model package" may start to emerge; but may defer any
-    such factoring until forced by a second toplevel entry point like [socbot]
-  - fmt command to cleanup the stream (reformat markdown, line(un)wrap, etc)
-  - ingest/import/harvest command(s)
+- ideas:
+  - future/upcoming items that get automatically collected when today reaches them
+  - tagged item relations, using dangling shortcut reference links, or a
+    `#hashtag` extension
+  - stream auto formatting (reformat markdown, line(un)wrap, etc)
+  - git versioned stream storage
+  - ingest/import/harvest from external sources
     - mine things like `// TODO` comments from code
     - mine items from remarks in prior done items; could use during rollover
     - mine wip/done fodder or even items from git log
-  - git versioned stream storage
+  - [cmd/soc] prior command state, like the ability to reference the last
+    affected item, or to reply to a disambiguation prompt
+
+# 2020-08-02
+
+## TODO
+
+- [cmd/soc]
+  - `readState` might start to evolve into the file-backed arena, maybe even
+    implementing scanning, and eventually matriculate up into scandown
+  - [config] custom trigger terms, phase, even commands?
+  - [model] once matching and item triggers are done, the boundary of a
+    reasonable "stream model package" may start to emerge; but may defer any
+    such factoring until forced by a second toplevel entry point like [socbot]
+  - [matching] prototype under the list and today commands
+    - using titles retained in `outlineScanner`
+    - tail args may be unmatched, used by context: e.g. to add a new item using
+      matched prior structure
+  - allow item triggers to be used as a header prefix like `## TODO area...`
 
 ## WIP
 
@@ -93,8 +96,16 @@ The first half of `scandown` is now prototyped:
     - addition: `todo/wip/done ...`
     - movement: `todo/wip/done ...` [needs: matching]
     - remove: `drop todo/wip/done ...`
+  - item type aliases, e.g. "bug" or "FIXME" for "TODO" etc
 
 ## Done
+
+- [cmd/soc]
+  - revamped builtin setup, to allow more config-driven things
+  - added item type config around the present name/remains vectors; still
+    hardcoded since we have no config store reading yet
+
+# 2020-08-01
 
 - [cmd/soc]
   - deleted `cmd/poc` and 3rd part markdown dependencies
