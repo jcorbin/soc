@@ -12,24 +12,93 @@ import (
 	"github.com/jcorbin/soc/internal/socui"
 )
 
+// ItemTypeConfig contains config for a stream item trigger word.
+type ItemTypeConfig struct {
+	// Name is the keyword used to mark items within the stream and as a
+	// command trigger given by the user. The default config provides 3 such
+	// names "TODO", "WIP", and "Done".
+	//
+	// May be used is a section header like `# TODO` or as an item prefix as in
+	// `- TODO thing to do`.
+	Name string
+
+	// If Remains is true these sections are left behind during when we collect
+	// the present day (e.g. under the `today` command). Otherwise such
+	// sections are carried forward to the next day.
+	//
+	// NOTE only sections are subject to present day collection, while any
+	// prefixed items in a remnant section will remain. I.E. any `- TODO thing`
+	// notes left under the `# Done` section are not collected, but remain in
+	// the past.
+	Remains bool
+}
+
+func compileItemConfigs(itemTypes []ItemTypeConfig) (names []string, remains []bool, pattern *regexp.Regexp, err error) {
+	names = make([]string, 0, len(itemTypes))
+	remains = make([]bool, 0, len(itemTypes))
+	for _, itemType := range itemTypes {
+		remains = append(remains, itemType.Remains)
+		names = append(names, itemType.Name)
+	}
+
+	{
+		str := `(?i:^\s*`
+		for i, name := range names {
+			name = regexp.QuoteMeta(name)
+			if i > 0 {
+				str += `|(` + name + `)`
+			} else {
+				str += `(` + name + `)`
+			}
+		}
+		str += `\s*$)`
+		pattern, err = regexp.Compile(str)
+	}
+
+	return names, remains, pattern, err
+}
+
 func init() {
+	builtinSetup("", setupToday)
 	builtinServer("today", serveToday,
 		"print today's section of the stream")
 }
 
-func serveToday(ctx *context, req *socui.Request, res *socui.Response) (rerr error) {
-	if err := ctx.today.collect(ctx.store, res); err != nil {
+func setupToday(ctx *context) (err error) {
+	builtinItemTypes := []ItemTypeConfig{
+		{Name: "TODO", Remains: false},
+		{Name: "WIP", Remains: false},
+		{Name: "Done", Remains: true},
+	}
+
+	// TODO read stored config
+	ctx.today.sectionNames, ctx.today.sectionRemains, ctx.today.sectionPattern, err = compileItemConfigs(builtinItemTypes)
+	if err != nil {
 		return err
 	}
 
-	// display today
-	res.Break()
-	today := ctx.today.sections[todaySection]
-	_, err := ctx.today.writeSectionsInto(res, today.byteRange)
+	return nil
+}
+
+func serveToday(ctx *context, req *socui.Request, res *socui.Response) error {
+	err := ctx.today.collect(ctx.store, res)
+	if err == nil {
+		// display today
+		res.Break()
+		today := ctx.today.sections[todaySection]
+		_, err = ctx.today.writeSectionsInto(res, today.byteRange)
+	}
 	return err
 }
 
+type presentConfig struct {
+	sectionNames   []string
+	sectionRemains []bool
+	sectionPattern *regexp.Regexp
+}
+
 type presentDay struct {
+	presentConfig
 	readState
 	date     isotime.GrainedTime
 	sections []section
@@ -41,7 +110,7 @@ type presentSection int
 const (
 	todaySection presentSection = iota
 	yesterdaySection
-	firstTodaySubSection
+	firstVarSection
 )
 
 func (p presentSection) String() string {
@@ -51,28 +120,8 @@ func (p presentSection) String() string {
 	case yesterdaySection:
 		return "yesterday"
 	default:
-		return fmt.Sprintf("today[%v]", int(p-firstTodaySubSection))
+		return fmt.Sprintf("today[%v]", int(p-firstVarSection))
 	}
-}
-
-var (
-	todaySectionNames   = []string{"TODO", "WIP", "Done"}
-	todaySectionRemains = []bool{false, false, true}
-	todaySectionPattern *regexp.Regexp
-)
-
-func init() {
-	str := `(?i:^\s*`
-	for i, name := range todaySectionNames {
-		name = regexp.QuoteMeta(name)
-		if i > 0 {
-			str += `|(` + name + `)`
-		} else {
-			str += `(` + name + `)`
-		}
-	}
-	str += `\s*$)`
-	todaySectionPattern = regexp.MustCompile(str)
 }
 
 // load reads present day section data from a stream store, retaining the
@@ -90,8 +139,8 @@ func (pres *presentDay) load(st store) error {
 
 	// reset internal storage state
 	{
-		base := int(firstTodaySubSection)
-		pres.sections = make([]section, base, base+todaySectionPattern.NumSubexp())
+		base := int(firstVarSection)
+		pres.sections = make([]section, base, base+pres.sectionPattern.NumSubexp())
 		pres.titles.Reset()
 		pres.titles.Extend(base)
 	}
@@ -116,7 +165,7 @@ func (pres *presentDay) load(st store) error {
 
 	// markSub allocates storage for a today sub-section and then opens it.
 	markSub := func(i int) {
-		j := int(firstTodaySubSection) + i
+		j := int(firstVarSection) + i
 		if n := j - len(pres.sections) + 1; n > 0 {
 			pres.sections = append(pres.sections, make([]section, n)...)
 			pres.titles.Extend(n)
@@ -151,7 +200,7 @@ func (pres *presentDay) load(st store) error {
 			if t.Equal(pres.date) {
 				mark(todaySection)
 			} else if t.Grain() == isotime.TimeGrainDay {
-				if len(pres.sections) > int(firstTodaySubSection) {
+				if len(pres.sections) > int(firstVarSection) {
 					break
 				}
 				mark(yesterdaySection)
@@ -164,7 +213,7 @@ func (pres *presentDay) load(st store) error {
 
 		// match the item title against the recognizer pattern;
 		// the group number that matches provides the sub-section index
-		match := todaySectionPattern.FindSubmatchIndex(title.Bytes())
+		match := pres.sectionPattern.FindSubmatchIndex(title.Bytes())
 		for ii := 2; ii < len(match); {
 			start := match[ii]
 			ii++
@@ -230,16 +279,16 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		fmt.Fprintf(w, "# %v\n\n", pres.date)
 
 		// process each today sub-section, creating or carrying it forward
-		for i, name := range todaySectionNames {
+		for i, name := range pres.sectionNames {
 			var sec section
-			if j := int(firstTodaySubSection) + i; j < len(pres.sections) {
+			if j := int(firstVarSection) + i; j < len(pres.sections) {
 				sec = pres.sections[j]
 			}
 
 			if sec.id == 0 {
 				// add any missing sub-sections
 				fmt.Fprintf(w, "## %v\n\n", name)
-			} else if !todaySectionRemains[i] {
+			} else if !pres.sectionRemains[i] {
 				// carry forward non-remnant sub-sections (e.g. TODO and WIP)
 				pres.writeSectionsInto(w, sec.byteRange)
 				remnants.sub(sec.byteRange)
