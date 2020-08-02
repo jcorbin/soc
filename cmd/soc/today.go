@@ -33,13 +33,38 @@ type ItemTypeConfig struct {
 	// notes left under the `# Done` section are not collected, but remain in
 	// the past.
 	Remains bool
+
+	// AliasOf may be used to define a synonymous item type, e.g. "FIXME" being
+	// an alias of "TODO". An alias item type may set Remains so that any
+	// matching section does not get carried forward by collection. However if
+	// the base item type has set Remains, a false alias value is ineffectual;
+	// i.e. any alias of "Done" will alway remain, even if its config
+	// explicitly sets Remains to false.
+	AliasOf string
 }
 
 func compileItemConfigs(itemTypes []ItemTypeConfig) (names []string, remains []bool, pattern *regexp.Regexp, err error) {
 	names = make([]string, 0, len(itemTypes))
 	remains = make([]bool, 0, len(itemTypes))
 	for _, itemType := range itemTypes {
-		remains = append(remains, itemType.Remains)
+		// remains if set (by any alias referent)
+		rem := itemType.Remains
+		for aliasOf := itemType.AliasOf; !rem && aliasOf != ""; {
+			found := false
+			// this should be find since itemTypes should not be large, and since this compilation should happen only once
+			for _, it := range itemTypes {
+				if it.Name == aliasOf {
+					found = true
+					aliasOf = it.AliasOf
+					rem = it.Remains
+					break
+				}
+			}
+			if !found {
+				return nil, nil, nil, fmt.Errorf("undefined alias %q of %q", itemType.Name, aliasOf)
+			}
+		}
+		remains = append(remains, rem)
 		names = append(names, itemType.Name)
 	}
 
