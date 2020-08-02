@@ -6,7 +6,6 @@ import (
 	"io"
 	"log"
 	"regexp"
-	"time"
 
 	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/jcorbin/soc/internal/scanio"
@@ -19,29 +18,20 @@ func init() {
 }
 
 func serveToday(ctx *context, req *socui.Request, res *socui.Response) (rerr error) {
-	var pres presentDay // TODO bake into ctx context
-	defer func() {
-		if cerr := pres.Close(); rerr == nil {
-			rerr = cerr
-		}
-	}()
-
-	if err := pres.collect(ctx.store, req.Now(), res); err != nil {
+	if err := ctx.today.collect(ctx.store, res); err != nil {
 		return err
 	}
 
 	// display today
-	// TODO if pres.load above could be hinted to retain all today bytes in an
-	// arena, we could avoid these read(s) and buffer alloc
 	res.Break()
-	today := pres.sections[todaySection]
-	_, err := pres.writeSectionsInto(res, today.byteRange)
+	today := ctx.today.sections[todaySection]
+	_, err := ctx.today.writeSectionsInto(res, today.byteRange)
 	return err
 }
 
 type presentDay struct {
 	readState
-	today    isotime.GrainedTime
+	date     isotime.GrainedTime
 	sections []section
 	titles   scanio.ByteTokens
 }
@@ -158,7 +148,7 @@ func (pres *presentDay) load(st store) error {
 		// anything with an empty title (remnant) contains only the (already
 		// parsed away) time, so check for today or yesterday
 		if title.Empty() {
-			if t.Equal(pres.today) {
+			if t.Equal(pres.date) {
 				mark(todaySection)
 			} else if t.Grain() == isotime.TimeGrainDay {
 				if len(pres.sections) > int(firstTodaySubSection) {
@@ -200,29 +190,12 @@ func (pres *presentDay) load(st store) error {
 	return nil
 }
 
-// collect the present, updating the stream if necessary.
-//
-// It first sets today from the given now, and attempts a lead.
-//
-// If no today section is found, an update is performed, and a new section is
-// written for today.
-//
-// Any yesterday sub-section content is processed leaving behind remnant items
-// (Done items or any unrecognized content) and carrying forward the rest
-// (TODO/WIP items).
-//
-// Adds any sub-sections that aren't found in yesterday.
-func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) error {
-	// try to load today, ignoring any not exists error since we can seed
-	// initial stream content here
-	year, month, day := now.Date()
-	pres.today = isotime.Time(time.Local, year, month, day, 0, 0, 0)
-	if err := pres.load(st); !errors.Is(err, errStoreNotExists) {
-		if err != nil {
-			return err
-		} else if pres.sections[todaySection].id != 0 {
-			return nil
-		}
+// collect performs a stream update if no today section has been found, writing
+// a new today section, collecting any non-remnant yesterday content (e.g.
+// TODO/WIP items), and ensuring that all today sub-sections are present.
+func (pres *presentDay) collect(st store, res *socui.Response) error {
+	if pres.sections[todaySection].id != 0 {
+		return nil
 	}
 	// under a pending atomic update
 	return pres.update(st, func(w io.Writer) error {
@@ -254,7 +227,7 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 		}
 
 		// write the new today section header
-		fmt.Fprintf(w, "# %v\n\n", pres.today)
+		fmt.Fprintf(w, "# %v\n\n", pres.date)
 
 		// process each today sub-section, creating or carrying it forward
 		for i, name := range todaySectionNames {

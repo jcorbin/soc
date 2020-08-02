@@ -1,19 +1,23 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
+	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/jcorbin/soc/internal/socui"
 )
 
 type context struct {
 	args  []string
-	store store
 	mux   serveMux
+	store store
+	today presentDay
 }
 
 type server interface {
@@ -112,6 +116,10 @@ func (ctx context) Describe(name string) string {
 		return ""
 	}
 	return ctx.mux.Describe(name)
+}
+
+func (ctx *context) Close() error {
+	return ctx.today.Close()
 }
 
 func (mux serveMux) Commands() []string {
@@ -336,7 +344,7 @@ func (ui *ui) init() error {
 	return nil
 }
 
-func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) error {
+func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) (rerr error) {
 	defer logs.restore()
 	logs.setOutput(res).setFlags(0)
 
@@ -347,6 +355,23 @@ func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) error {
 	}
 
 	ctx := ui.context
+
+	{
+		year, month, day := req.Now().Date()
+		ctx.today.date = isotime.Time(time.Local, year, month, day, 0, 0, 0)
+	}
+	defer func() {
+		if cerr := ctx.Close(); rerr == nil {
+			rerr = cerr
+		}
+	}()
+
+	// try to load today, ignoring any not exists error; hereafter, a handler
+	// may check ctx.today.src == nil and either error, or perform
+	// initialization
+	if err := ctx.today.load(ctx.store); err != nil && !errors.Is(err, errStoreNotExists) {
+		return err
+	}
 
 	return ui.mux.serve(&ctx, req, res)
 }
