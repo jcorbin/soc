@@ -398,6 +398,21 @@ func (br byteRange) sub(other byteRange) (head, tail byteRange) {
 type readState struct {
 	ReadAtCloser
 	size int64
+	err  error
+}
+
+func (rs *readState) ReadAt(p []byte, off int64) (n int, err error) {
+	if err = rs.err; err != nil {
+		return 0, err
+	}
+	if rs.ReadAtCloser == nil {
+		return 0, nil
+	}
+	n, err = rs.ReadAtCloser.ReadAt(p, off)
+	if err != nil && err != io.EOF {
+		rs.err = err
+	}
+	return n, err
 }
 
 func (rs *readState) Close() error {
@@ -406,8 +421,10 @@ func (rs *readState) Close() error {
 	}
 	err := rs.ReadAtCloser.Close()
 	if err == nil {
+		err = rs.err
 		rs.ReadAtCloser = nil
 		rs.size = 0
+		rs.err = nil
 	}
 	return err
 }
@@ -415,6 +432,7 @@ func (rs *readState) Close() error {
 func (rs *readState) Size() int64 {
 	return rs.size
 }
+
 func (rs *readState) open(rc io.ReadCloser, err error) error {
 	if errors.Is(err, errStoreNotExists) {
 		return nil
@@ -423,6 +441,7 @@ func (rs *readState) open(rc io.ReadCloser, err error) error {
 		return err
 	}
 	rs.ReadAtCloser, rs.size, err = sizedReaderAt(rc)
+	rs.err = nil
 	return err
 }
 type writeState struct {
@@ -459,21 +478,31 @@ func (cs *copyState) init() {
 }
 
 func (cs *copyState) copySection(br byteRange) error {
-	if cs.err == nil {
-		cs.init()
-		// TODO CopySection just turns around and recomputes end...
-		_, cs.err = socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf)
+	if cs.readState.err != nil {
+		return cs.readState.err
 	}
-	return cs.err
+	if cs.writeState.err != nil {
+		return cs.writeState.err
+	}
+	cs.init()
+	// TODO CopySection just turns around and recomputes end...
+	_, err := socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf)
+	return err
 }
 
 func (cs *copyState) copySections(brs ...byteRange) error {
-	if len(brs) > 0 && cs.err == nil {
-		cs.init()
-		for _, br := range brs {
-			// TODO CopySection just turns around and recomputes end...
-			_, cs.err = socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf)
+	if cs.readState.err != nil {
+		return cs.readState.err
+	}
+	if cs.writeState.err != nil {
+		return cs.writeState.err
+	}
+	cs.init()
+	for _, br := range brs {
+		// TODO CopySection just turns around and recomputes end...
+		if _, err := socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf); err != nil {
+			return err
 		}
 	}
-	return cs.err
+	return nil
 }

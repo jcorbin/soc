@@ -319,7 +319,10 @@ func (pres *presentDay) update(st store, with func(cs *copyState) error) (rerr e
 	cs.w = cwc
 	defer func() {
 		if rerr == nil {
-			rerr = cs.err
+			rerr = cs.readState.err
+		}
+		if rerr == nil {
+			rerr = cs.writeState.err
 		}
 		if rerr == nil {
 			rerr = cwc.Close()
