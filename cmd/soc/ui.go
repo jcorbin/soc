@@ -345,7 +345,7 @@ func (ui *ui) init() error {
 }
 
 func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) (rerr error) {
-	defer logs.restore()
+	defer logs.restore()()
 	logs.setOutput(res).setFlags(0)
 
 	if ui.mux == nil {
