@@ -62,31 +62,33 @@ func (srv tmplServer) serve(ctx *context, req *socui.Request, res *socui.Respons
 
 type serveMux map[string]server
 
-func (mux serveMux) handle(name string, srv server) {
+func (mux serveMux) handle(name string, srv server) error {
 	if mux[name] != nil {
-		panic(fmt.Sprintf("%q server already defined", name))
+		return fmt.Errorf("%q server already defined", name)
 	}
 	mux[name] = srv
+	return nil
 }
 
-func (mux serveMux) handleFunc(name string, srv interface{}, args ...interface{}) {
-	mux.handle(name, serve(srv, args...))
+func (mux serveMux) handleFunc(name string, srv interface{}, args ...interface{}) error {
+	return mux.handle(name, serve(srv, args...))
 }
 
-func (mux serveMux) helpTopic(name string, srv server) {
+func (mux serveMux) helpTopic(name string, srv server) error {
 	topics, _ := mux[".helpTopics"].(serveMux)
 	if topics[name] != nil {
-		panic(fmt.Sprintf("%q topic already defined", name))
+		return fmt.Errorf("%q topic already defined", name)
 	}
 	if topics == nil {
 		topics = serveMux{}
 		mux[".helpTopics"] = topics
 	}
 	topics[name] = srv
+	return nil
 }
 
-func (mux serveMux) helpTopicText(name string, txt string) {
-	mux.helpTopic(name, textServer(txt))
+func (mux serveMux) helpTopicText(name string, txt string) error {
+	return mux.helpTopic(name, textServer(txt))
 }
 
 func (mux serveMux) help() server {
@@ -301,47 +303,110 @@ func serve(srv interface{}, args ...interface{}) (actual server) {
 	return actual
 }
 
-var builtins []func(mux serveMux)
+type setup interface{ apply(ctx *context) error }
+
+var builtins []setup
+
+func builtin(builtin setup) {
+	if prior := lookupBuiltinName(nameOf(builtin)); prior != nil {
+		panic(fmt.Sprintf("builtin %q already defined as %+v", nameOf(builtin), prior))
+	}
+	builtins = append(builtins, builtin)
+}
 
 func builtinServer(name string, srv interface{}, args ...interface{}) {
-	actual := serve(srv, args...)
-	builtins = append(builtins, func(mux serveMux) {
-		mux.handle(name, actual)
-	})
+	var sb serverBuiltin
+	sb.name = name
+	sb.srv = serve(srv, args...)
+	builtin(sb)
 }
 
 func builtinHelpTopic(name string, srv interface{}) {
-	actual := serve(srv)
-	builtins = append(builtins, func(mux serveMux) {
-		mux.helpTopic(name, actual)
-	})
+	var hb helpBuiltin
+	hb.name = name
+	hb.srv = serve(srv)
+	builtin(hb)
 }
+
+func builtinSetup(name string, sf func(ctx *context) error) {
+	var setup setup = setupFunc(sf)
+	if name != "" {
+		setup = namedSetup{name, setup}
+	}
+	builtin(setup)
+}
+
+func nameOf(x interface{}) string {
+	type named interface{ Name() string }
+	if nom, ok := x.(named); ok {
+		return nom.Name()
+	}
+	return ""
+}
+
+func lookupBuiltinName(name string) setup {
+	for _, builtin := range builtins {
+		if nom := nameOf(builtin); nom != "" && nom == name {
+			return builtin
+		}
+	}
+	return nil
+}
+
+type serverBuiltin struct {
+	name string
+	srv  server
+}
+type helpBuiltin struct{ serverBuiltin }
+type setupFunc func(ctx *context) error
+type namedSetup struct {
+	name string
+	setup
+}
+
+func (sb serverBuiltin) Name() string             { return sb.name }
+func (sb serverBuiltin) apply(ctx *context) error { return ctx.mux.handle(sb.name, sb.srv) }
+func (hb helpBuiltin) apply(ctx *context) error   { return ctx.mux.helpTopic(hb.name, hb.srv) }
+func (ns namedSetup) Name() string                { return ns.name }
+func (sf setupFunc) apply(ctx *context) error     { return sf(ctx) }
 
 // TODO builtinHelpTopic("stream")
 // TODO builtinHelpTopic("matching")
 // TODO some sort of better builtinServer("", ...): display a today summarya,
 // an intro on first run, or maybe look for toplevel -h[elp] flags
+// TODO load user config from storage (extension?)
+// TODO user aliases and other customizations
 
 type ui struct {
+	builtinsRan error
 	context
 }
+
+var done = errors.New("done")
 
 func (ui *ui) init() error {
 	if ui.store == nil {
 		ui.store = &memStore{}
 	}
 
-	// TODO load user config from storage (extension?)
-
 	if ui.mux == nil {
 		ui.mux = make(serveMux)
-		for _, addBuiltin := range builtins {
-			addBuiltin(ui.mux)
-		}
-		// TODO user aliases and other customizations
 	}
 
-	return nil
+	err := ui.builtinsRan
+	if err == nil {
+		for _, builtin := range builtins {
+			if err := builtin.apply(&ui.context); err != nil {
+				ui.builtinsRan = err
+				break
+			}
+		}
+		ui.builtinsRan = done
+	}
+	if err == done {
+		err = nil
+	}
+	return err
 }
 
 func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) (rerr error) {
