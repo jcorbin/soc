@@ -598,6 +598,7 @@ type presentDay struct {
 	loaded   bool
 	date     isotime.GrainedTime
 	sections []section
+	times    []isotime.GrainedTime
 	titles   []scanio.Token
 	arena    scanio.ByteArena
 }
