@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"regexp"
+	"strings"
 
 	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/jcorbin/soc/internal/scanio"
@@ -60,7 +61,7 @@ func compileItemConfigs(itemTypes []ItemTypeConfig) (names []string, remains []b
 
 func init() {
 	builtinSetup("", setupToday)
-	builtinServer("today", serveToday,
+	builtinServer("today", todayServer{"today", int(todaySection)},
 		"print today's section of the stream")
 }
 
@@ -77,18 +78,59 @@ func setupToday(ctx *context) (err error) {
 		return err
 	}
 
+	for i, name := range ctx.today.sectionNames {
+		srv := serve(todayServer{name, int(firstVarSection) + i},
+			fmt.Sprintf("show/add/move %v today items", name),
+		)
+		// TODO replace this lower registration hack with better/fuzzier mux matching
+		if err := ctx.mux.handle(strings.ToLower(name), srv); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
-func serveToday(ctx *context, req *socui.Request, res *socui.Response) error {
-	err := ctx.today.collect(ctx.store, res)
-	if err == nil {
-		// display today
-		res.Break()
-		today := ctx.today.sections[todaySection]
-		_, err = ctx.today.writeSectionsInto(res, today.byteRange)
+type todayServer struct {
+	name  string
+	index int
+}
+
+func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Response) error {
+	if err := ctx.today.collect(ctx.store, res); err != nil {
+		return err
 	}
-	return err
+	if tod.index >= len(ctx.today.sections) {
+		return fmt.Errorf("unable to find %v %q section", ctx.today.date, tod.name)
+	}
+
+	// collect remaining command args to match against items, adding any
+	// unmatched args as a new item
+	var args []string
+	for req.ScanArg() {
+		args = append(args, req.Arg())
+	}
+
+	sec := ctx.today.sections[tod.index]
+
+	// list if no args; TODO unify with matched all branch below?
+	if len(args) == 0 {
+		var src io.Reader = sec.body.readerWithin(&ctx.today)
+
+		res.Break()
+		// TODO option for raw markdown vs outline
+		// src = io.MultiReader(sec.header().readerWithin(&ctx.today), src)
+		// if tod.index != int(todaySection) {
+		// 	todSec := ctx.today.sections[todaySection]
+		// 	src = io.MultiReader(todSec.header().readerWithin(&ctx.today), src)
+		// }
+		// _, err := io.Copy(res, src)
+
+		fmt.Fprintf(res, "%s\n", ctx.today.titles.Get(tod.index).Bytes())
+		return printOutline(res, src)
+	}
+
+	return fmt.Errorf("unimplemented %v %q", ctx.CommandHead(), args)
 }
 
 type presentConfig struct {
