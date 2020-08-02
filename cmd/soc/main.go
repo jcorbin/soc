@@ -66,9 +66,7 @@ func (st logState) restore() func() {
 		if st.out == nil {
 			st.out = os.Stderr
 		}
-		log.SetOutput(st.out)
-		log.SetFlags(st.flags)
-		logs = st
+		logs.setOutput(st.out).setFlags(st.flags)
 	}
 }
 
