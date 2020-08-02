@@ -396,17 +396,35 @@ func (br byteRange) sub(other byteRange) (head, tail byteRange) {
 
 // TODO eventually unify readState/byteRange into a file-backed scanio arena
 type readState struct {
-	src     ReadAtCloser
-	srcSize int64
+	ReadAtCloser
+	size int64
 }
 
-func (rs readState) Close() error {
-	if rs.src != nil {
-		return rs.src.Close()
+func (rs *readState) Close() error {
+	if rs.ReadAtCloser == nil {
+		return nil
 	}
-	return nil
+	err := rs.ReadAtCloser.Close()
+	if err == nil {
+		rs.ReadAtCloser = nil
+		rs.size = 0
+	}
+	return err
 }
 
+func (rs *readState) Size() int64 {
+	return rs.size
+}
+func (rs *readState) open(rc io.ReadCloser, err error) error {
+	if errors.Is(err, errStoreNotExists) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	rs.ReadAtCloser, rs.size, err = sizedReaderAt(rc)
+	return err
+}
 type writeState struct {
 	w   io.Writer
 	err error
@@ -444,7 +462,7 @@ func (cs *copyState) copySection(br byteRange) error {
 	if cs.err == nil {
 		cs.init()
 		// TODO CopySection just turns around and recomputes end...
-		_, cs.err = socutil.CopySection(cs.w, cs.src, br.start, br.end-br.start, cs.copyBuf)
+		_, cs.err = socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf)
 	}
 	return cs.err
 }
@@ -454,7 +472,7 @@ func (cs *copyState) copySections(brs ...byteRange) error {
 		cs.init()
 		for _, br := range brs {
 			// TODO CopySection just turns around and recomputes end...
-			_, cs.err = socutil.CopySection(cs.w, cs.src, br.start, br.end-br.start, cs.copyBuf)
+			_, cs.err = socutil.CopySection(cs.w, cs.ReadAtCloser, br.start, br.end-br.start, cs.copyBuf)
 		}
 	}
 	return cs.err

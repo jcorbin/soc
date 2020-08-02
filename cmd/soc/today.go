@@ -36,7 +36,7 @@ func serveToday(ctx context, req *socui.Request, res *socui.Response) (rerr erro
 	// arena, we could avoid these read(s) and buffer alloc
 	res.Break()
 	today := pres.sections[todaySection]
-	_, err := socutil.CopySection(res, pres.src, today.start, today.end-today.start, nil)
+	_, err := socutil.CopySection(res, pres.ReadAtCloser, today.start, today.end-today.start, nil)
 	return err
 }
 
@@ -95,12 +95,8 @@ func init() {
 // todaySectionNames.
 func (pres *presentDay) load(st store) error {
 	// close any prior storage reader
-	if pres.src != nil {
-		err := pres.src.Close()
-		pres.src, pres.srcSize = nil, 0
-		if err != nil {
-			return err
-		}
+	if err := pres.Close(); err != nil {
+		return err
 	}
 
 	// reset internal storage state
@@ -114,24 +110,13 @@ func (pres *presentDay) load(st store) error {
 	// open a new storage reader, and convert it for random access ala
 	// io.ReaderAt, which may end up sponging the source into a tempfile if it
 	// doesn't support random access
-	{
-		rc, err := st.open()
-		if errors.Is(err, errStoreNotExists) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		rac, size, err := sizedReaderAt(rc)
-		if err != nil {
-			return err
-		}
-		pres.src, pres.srcSize = rac, size
+	if err := pres.open(st.open()); err != nil {
+		return err
 	}
 
 	// setup the outine scanner and utilities
 	var sc outlineScanner
-	sc.Reset(io.NewSectionReader(pres.src, 0, pres.srcSize))
+	sc.Reset(io.NewSectionReader(pres, 0, pres.size))
 
 	// mark opens a new section, retaining its title bytes for later use.
 	mark := func(i presentSection) {
@@ -257,7 +242,7 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 		// all bytes through; the code below then will subtract processed
 		// sections from this pending "copy the rest" sword
 		remnants := make(byteRanges, 0, 2*len(pres.sections))
-		if all := (byteRange{0, pres.srcSize}); !all.empty() {
+		if all := (byteRange{0, pres.size}); !all.empty() {
 			remnants = append(remnants, all)
 		}
 		defer func() { cs.copySections(remnants...) }()
@@ -315,7 +300,7 @@ func (pres *presentDay) collect(st store, now time.Time, res *socui.Response) er
 // content, and presentDay.load() will be called to reload the newly written
 // state.
 func (pres *presentDay) update(st store, with func(cs *copyState) error) (rerr error) {
-	if pres.src == nil {
+	if pres.ReadAtCloser == nil {
 		if err := pres.load(st); err != nil && !errors.Is(err, errStoreNotExists) {
 			return err
 		}
