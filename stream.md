@@ -89,8 +89,6 @@ The first half of `scandown` is now prototyped:
 ## WIP
 
 - [cmd/soc]
-  - subsume `presentDay` into `context`, while broadening out to item
-    manipulation commands
   - [triggers] for item lifecycle
     - addition: `todo/wip/done ...`
     - movement: `todo/wip/done ...` [needs: matching]
@@ -103,6 +101,7 @@ The first half of `scandown` is now prototyped:
   - reduced `socutil` package, moving args logic into `socui`, and dropping
     unused WD walk utility
   - dropped nascent pointers toward a `soc init`, instead make things just work
+  - made `presentDay` loading broadly available to all commands
 
 # 2020-07-31
 
