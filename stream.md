@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-02
+# 2020-08-04
 
 ## TODO
 
@@ -92,13 +92,22 @@ The first half of `scandown` is now prototyped:
 ## WIP
 
 - [cmd/soc]
+  - item type aliases, e.g. "bug" or "FIXME" for "TODO" etc
   - [triggers] for item lifecycle
     - addition: `todo/wip/done ...`
     - movement: `todo/wip/done ...` [needs: matching]
     - remove: `drop todo/wip/done ...`
-  - item type aliases, e.g. "bug" or "FIXME" for "TODO" etc
 
 ## Done
+
+- [cmd/soc]
+  - generalized outline listing and reused it in today commands rather
+    than printing raw markdown
+  - generalized the today server to support sub-section entry points
+    (todo/wip/done commands!)
+  - TODO bring back raw markdown today printing as an option
+
+# 2020-08-02
 
 - [cmd/soc]
   - revamped builtin setup, to allow more config-driven things
