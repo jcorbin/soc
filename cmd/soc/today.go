@@ -124,6 +124,27 @@ func (p presentSection) String() string {
 	}
 }
 
+func (pc presentConfig) matchSection(name []byte) int {
+	return pc.matchSectionIndex(pc.sectionPattern.FindSubmatchIndex(name))
+}
+
+func (pc presentConfig) matchSectionString(name string) int {
+	return pc.matchSectionIndex(pc.sectionPattern.FindStringSubmatchIndex(name))
+}
+
+func (pc presentConfig) matchSectionIndex(match []int) int {
+	for ii := 2; ii < len(match); {
+		start := match[ii]
+		ii++
+		end := match[ii]
+		ii++
+		if start >= 0 && start < end {
+			return ii/2 - 2
+		}
+	}
+	return -1
+}
+
 // load reads present day section data from a stream store, retaining the
 // opened reader within for further use (e.g. to actually do anything with
 // section contents).
@@ -161,16 +182,6 @@ func (pres *presentDay) load(st store) error {
 		fmt.Fprint(&pres.titles, sc.outline)
 		pres.sections[i] = sc.openSection()
 		pres.titles.Set(int(i), pres.titles.Take())
-	}
-
-	// markSub allocates storage for a today sub-section and then opens it.
-	markSub := func(i int) {
-		j := int(firstVarSection) + i
-		if n := j - len(pres.sections) + 1; n > 0 {
-			pres.sections = append(pres.sections, make([]section, n)...)
-			pres.titles.Extend(n)
-		}
-		mark(presentSection(j))
 	}
 
 	// scan the stream...
@@ -213,16 +224,14 @@ func (pres *presentDay) load(st store) error {
 
 		// match the item title against the recognizer pattern;
 		// the group number that matches provides the sub-section index
-		match := pres.sectionPattern.FindSubmatchIndex(title.Bytes())
-		for ii := 2; ii < len(match); {
-			start := match[ii]
-			ii++
-			end := match[ii]
-			ii++
-			if start >= 0 && start < end {
-				markSub(ii/2 - 2)
-				break
+		if i := pres.matchSection(title.Bytes()); i >= 0 {
+			// allocate storage for this sub-section and then open
+			j := int(firstVarSection) + i
+			if n := j - len(pres.sections) + 1; n > 0 {
+				pres.sections = append(pres.sections, make([]section, n)...)
+				pres.titles.Extend(n)
 			}
+			mark(presentSection(j))
 		}
 	}
 
