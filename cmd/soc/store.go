@@ -278,6 +278,11 @@ type byteRange struct {
 
 type byteRanges []byteRange
 
+func (br byteRange) readerWithin(ra io.ReaderAt) *io.SectionReader {
+	n := br.end - br.start
+	return io.NewSectionReader(ra, br.start, n)
+}
+
 // TODO func (brs *byteRanges) add(br byteRange) -- is more complicated, try to use sub instead
 func (brs *byteRanges) sub(br byteRange) {
 	tmp := (*brs)

@@ -154,7 +154,7 @@ func (pres *presentDay) load(st store) error {
 
 	// setup the outine scanner and utilities
 	var sc outlineScanner
-	sc.Reset(io.NewSectionReader(pres, 0, pres.size))
+	sc.Reset(byteRange{0, pres.size}.readerWithin(pres))
 
 	// mark opens a new section, retaining its title bytes for later use.
 	mark := func(i presentSection) {
