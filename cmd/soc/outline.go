@@ -285,3 +285,102 @@ func (sc *outlineScanner) updateSection(sec section) section {
 
 	return sec
 }
+
+func mustCompileOutlineFilter(args ...interface{}) outlineFilter {
+	f, err := compileOutlineFilter(args...)
+	if err != nil {
+		panic(err)
+	}
+	return f
+}
+
+func compileOutlineFilter(args ...interface{}) (outlineFilter, error) {
+	var fs outlineFilterAnd
+	for _, arg := range args {
+		switch val := arg.(type) {
+		case bool:
+			if !val {
+				return outlineFilterConst(val), nil
+			}
+
+		case func(out *outline) bool:
+			fs = append(fs, outlineFilterFunc(val))
+
+		case isotime.TimeGrain:
+			fs = append(fs, outlineTimeGrainFilter(val))
+
+		case int:
+			fs = append(fs, outlineLevelFilter(val))
+
+		case outlineFilterAnd:
+			fs = append(fs, val...)
+
+		case outlineFilter:
+			fs = append(fs, val)
+
+		default:
+			return nil, fmt.Errorf("invalid outline filter arg type %T", arg)
+		}
+	}
+
+	switch len(fs) {
+	case 0:
+		return nil, nil
+	case 1:
+		return fs[0], nil
+	default:
+		return fs, nil
+	}
+}
+
+func outlineFilters(filters ...outlineFilter) outlineFilter {
+	var fs outlineFilterAnd
+	for _, f := range filters {
+		switch fv := f.(type) {
+		case nil:
+		case outlineFilterConst:
+			if !bool(fv) {
+				return fv // const false annihilates
+			}
+			// elide const true
+		case outlineFilterAnd:
+			fs = append(fs, fv...)
+		default:
+			fs = append(fs, fv)
+		}
+	}
+	switch len(fs) {
+	case 0:
+		return nil
+	case 1:
+		return fs[0]
+	default:
+		return fs
+	}
+}
+
+type outlineFilter interface{ match(out *outline) bool }
+type outlineFilterConst bool
+type outlineFilterAnd []outlineFilter
+type outlineFilterFunc func(out *outline) bool
+func (c outlineFilterConst) match(out *outline) bool { return bool(c) }
+func (f outlineFilterFunc) match(out *outline) bool  { return f(out) }
+func (fs outlineFilterAnd) match(out *outline) bool {
+	for _, f := range fs {
+		if !f.match(out) {
+			return false
+		}
+	}
+	return true
+}
+
+type outlineTimeGrainFilter isotime.TimeGrain
+func (tg outlineTimeGrainFilter) match(out *outline) bool {
+	return out.lastTime().Grain() >= isotime.TimeGrain(tg)
+}
+
+type outlineLevelFilter int
+func (l outlineLevelFilter) match(out *outline) bool {
+	_, is := out.heading(int(l))
+	return is
+}

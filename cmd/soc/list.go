@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
 
+	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/jcorbin/soc/internal/socui"
 )
 
@@ -26,24 +28,25 @@ func serveList(ctx *context, _ *socui.Request, res *socui.Response) (rerr error)
 			rerr = cerr
 		}
 	}()
+	return printOutline(res, rc, mustCompileOutlineFilter(isotime.TimeGrainYear, 1))
+}
 
+func printOutline(to io.Writer, from io.Reader, filters ...outlineFilter) error {
 	var sc outlineScanner
-	sc.Reset(rc)
+	filter := outlineFilters(filters...)
+	sc.Reset(from)
 
 	n := 0
 	for sc.Scan() {
 		if !sc.titled {
 			continue
 		}
-		if sc.lastTime().Grain() == 0 {
+		if filter != nil && !filter.match(&sc.outline) {
 			continue
 		}
-		if _, isH1 := sc.heading(1); !isH1 {
-			continue
-		}
-		n++
-		fmt.Fprintf(res, "%v. %v\n", n, sc)
+		n++ // TODO sync a leveled outline stack
+		fmt.Fprintf(to, "%v. %v\n", n, sc)
 	}
 
-	return nil
+	return sc.Err()
 }
