@@ -245,12 +245,17 @@ func (sec section) header() byteRange {
 	return sec.byteRange
 }
 
-func (sc *outlineScanner) openSection() (sec section) {
-	sec.id = sc.block.HeadID()
+func (sc *outlineScanner) openSection(ofType ...scandown.BlockType) (sec section) {
 	sec.start = sc.block.Offset()
 	sec.body = sec.byteRange
 	sec.body.start += int64(len(sc.Bytes()))
 	sec.end = -1
+	for i := len(sc.id) - 1; i >= 0; i-- {
+		if len(ofType) == 0 || isOneOfType(sc.outline.block[i].Type, ofType...) {
+			sec.id = sc.id[i]
+			break
+		}
+	}
 	return sec
 }
 
@@ -383,4 +388,13 @@ type outlineLevelFilter int
 func (l outlineLevelFilter) match(out *outline) bool {
 	_, is := out.heading(int(l))
 	return is
+}
+
+func isOneOfType(t scandown.BlockType, oneOf ...scandown.BlockType) bool {
+	for _, ot := range oneOf {
+		if ot == t {
+			return true
+		}
+	}
+	return false
 }
