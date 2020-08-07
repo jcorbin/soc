@@ -37,6 +37,20 @@ func (arena *ByteArena) Reset() {
 	arena.cur = 0
 }
 
+// PruneTo discards any bytes from the arena that aren't reference by a remain token.
+func (arena *ByteArena) PruneTo(remain []ByteArenaToken) {
+	offset := 0
+	for _, token := range remain {
+		if token.arena == arena {
+			if offset < token.end {
+				offset = token.end
+			}
+		}
+	}
+	arena.buf = arena.buf[:offset]
+	arena.cur = offset
+}
+
 // Truncate the token's arena so that it only contains bytes up to, but
 // excluding, the receiver token.
 // Panics if the token's bytes have already been discarded.
