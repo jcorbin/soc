@@ -112,11 +112,11 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	}
 
 	sec := ctx.today.sections[tod.index]
+	title := ctx.today.titles[tod.index].Bytes()
+	var src io.Reader = sec.body.readerWithin(&ctx.today)
 
 	// list if no args; TODO unify with matched all branch below?
 	if len(args) == 0 {
-		var src io.Reader = sec.body.readerWithin(&ctx.today)
-
 		res.Break()
 		// TODO option for raw markdown vs outline
 		// src = io.MultiReader(sec.header().readerWithin(&ctx.today), src)
@@ -126,7 +126,7 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 		// }
 		// _, err := io.Copy(res, src)
 
-		fmt.Fprintf(res, "%s\n", ctx.today.titles.Get(tod.index).Bytes())
+		fmt.Fprintf(res, "%s\n", title)
 		return printOutline(res, src)
 	}
 
@@ -144,7 +144,8 @@ type presentDay struct {
 	readState
 	date     isotime.GrainedTime
 	sections []section
-	titles   scanio.ByteTokens
+	titles   []scanio.ByteArenaToken
+	arena    scanio.ByteArena
 }
 
 type presentSection int
@@ -203,9 +204,10 @@ func (pres *presentDay) load(st store) error {
 	// reset internal storage state
 	{
 		base := int(firstVarSection)
-		pres.sections = make([]section, base, base+pres.sectionPattern.NumSubexp())
-		pres.titles.Reset()
-		pres.titles.Extend(base)
+		max := base + pres.sectionPattern.NumSubexp()
+		pres.sections = make([]section, base, max)
+		pres.titles = make([]scanio.ByteArenaToken, base, max)
+		pres.arena.Reset()
 	}
 
 	// open a new storage reader, and convert it for random access ala
@@ -221,9 +223,9 @@ func (pres *presentDay) load(st store) error {
 
 	// mark opens a new section, retaining its title bytes for later use.
 	mark := func(i presentSection) {
-		fmt.Fprint(&pres.titles, sc.outline)
+		fmt.Fprint(&pres.arena, sc.outline)
 		pres.sections[i] = sc.openSection()
-		pres.titles.Set(int(i), pres.titles.Take())
+		pres.titles[i] = pres.arena.Take()
 	}
 
 	// scan the stream...
@@ -271,7 +273,7 @@ func (pres *presentDay) load(st store) error {
 			j := int(firstVarSection) + i
 			if n := j - len(pres.sections) + 1; n > 0 {
 				pres.sections = append(pres.sections, make([]section, n)...)
-				pres.titles.Extend(n)
+				pres.titles = append(pres.titles, make([]scanio.ByteArenaToken, n)...)
 			}
 			mark(presentSection(j))
 		}
@@ -302,8 +304,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		// write the user a message on the way out
 		defer func() {
 			if pres.sections[yesterdaySection].id != 0 {
-				log.Printf("Created Today by rolling %q forward",
-					pres.titles.Get(int(yesterdaySection)).Bytes())
+				log.Printf("Created Today by rolling %q forward", pres.titles[yesterdaySection].Bytes())
 			} else {
 				log.Printf("Created new Today section at top of stream")
 			}
