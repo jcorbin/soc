@@ -35,16 +35,17 @@ type outline struct {
 	id     []int
 	block  []scandown.Block
 	time   []isotime.GrainedTime
-	title  scanio.ByteTokens
+	title  []scanio.ByteArenaToken
 	titled bool
+	arena  scanio.ByteArena
 }
 
 func (out outline) heading(level int) (_ scanio.ByteArenaToken, isLast bool) {
 	n := 0
-	for i := 0; i < out.title.Len(); i++ {
-		if token := out.title.Get(i); !token.Empty() {
+	for i := 0; i < len(out.title); i++ {
+		if token := out.title[i]; !token.Empty() {
 			if n++; n == level {
-				return token, i+1 == out.title.Len()
+				return token, i+1 == len(out.title)
 			}
 		}
 	}
@@ -69,7 +70,7 @@ func (out outline) Format(f fmt.State, _ rune) {
 	}
 
 	for i := range out.id {
-		t := out.title.Get(i)
+		t := out.title[i]
 		if !f.Flag('+') && t.Empty() {
 			continue
 		}
@@ -163,12 +164,12 @@ func (out *outline) sync(blocks scandown.BlockStack) {
 			continue
 		// ...filling in Item titles from their first paragraph
 		case scandown.Paragraph:
-			if j := i - 1; j >= 0 && out.title.Get(j).Empty() {
+			if j := i - 1; j >= 0 && out.title[j].Empty() {
 				t := out.time[j]
 				t, title = out.readTitle(t, &blocks)
 				out.titled = true
 				out.time[j] = t
-				out.title.Set(j, title)
+				out.title[j] = title
 			}
 		}
 		break
@@ -183,22 +184,23 @@ func (out *outline) push(id int, block scandown.Block, t isotime.GrainedTime, ti
 	out.id = append(out.id, id)
 	out.block = append(out.block, block)
 	out.time = append(out.time, t)
-	out.title.Push(title)
+	out.title = append(out.title, title)
 }
 
 func (out *outline) truncate(i int) {
 	out.id = out.id[:i]
 	out.block = out.block[:i]
 	out.time = out.time[:i]
-	out.title.Truncate(i)
+	out.title = out.title[:i]
+	out.arena.PruneTo(out.title)
 }
 
 func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.GrainedTime, scanio.ByteArenaToken) {
 	// TODO scan inline content => words
 	sc := bufio.NewScanner(r) // TODO internal rescanner
 	sc.Split(bufio.ScanWords)
-	scanio.CopyTokensWith(&out.title, sc, []byte{' '})
-	title := out.title.Take()
+	scanio.CopyTokensWith(&out.arena, sc, []byte{' '})
+	title := out.arena.Take()
 
 	// parse any date components from the title prefix
 	{
