@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-04
+# 2020-08-07
 
 ## TODO
 
@@ -99,6 +99,22 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+# 2020-08-06
+
+- [cmd/soc] minor work on today matching, mostly surrounding refactors and cleanups
+- [scanio] droppepd `ByteTokens`: consumers can just keep their own
+  `[]ByteArenaToken` and manage an arena, rather than continue to implement a
+  slice-like container type
+
+# 2020-08-05
+
+- [cmd/soc]
+  - [dev] continuing to work on today/todo/wip/done pattern matching, got
+    partial-printfing implementation sketched
+  - minor supporting refactor in outline section opening logic
+
+# 2020-08-04
 
 - [cmd/soc]
   - generalized outline listing and reused it in today commands rather
