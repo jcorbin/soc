@@ -143,6 +143,11 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 		patterns = make([]*regexp.Regexp, len(reqArgs))
 		for i, arg := range reqArgs {
 			arg = strings.TrimSpace(arg)
+			if plussed := strings.TrimPrefix(arg, "+"); plussed != arg {
+				reqArgs[i] = plussed
+				break
+			}
+
 			pattern, err := regexp.Compile(`(?i:` + regexp.QuoteMeta(arg) + `)`)
 			if err != nil {
 				return fmt.Errorf("unable to compile regexp for arg[%v]:%q : %w", i+1, arg, err)
