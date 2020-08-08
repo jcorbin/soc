@@ -225,6 +225,16 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 	res.Break()
 
+	// for i, g := range match.group {
+	// 	log.Printf("match [%v] group:%v matched:%v title:%q block:%v within:%v",
+	// 		i, g,
+	// 		match.matched[i],
+	// 		match.title[i].Bytes(),
+	// 		match.block[i],
+	// 		match.within[i],
+	// 	)
+	// }
+
 	fmt.Fprintf(res, "# %v\n", ctx.today.titles[tod.index])
 
 	// print matched/added item(s)
@@ -267,6 +277,7 @@ func (sc *outlineScanner) matchOutline(into *outlineMatch, arena scanio.Arena, p
 		if !sc.titled {
 			continue
 		}
+		// log.Printf("Scanned %v\n", sc)
 
 		// truncate current match after any of its items exit
 		for i := 0; i < len(cur.matched); i++ {
@@ -282,6 +293,7 @@ func (sc *outlineScanner) matchOutline(into *outlineMatch, arena scanio.Arena, p
 
 		// only care about unmatched new items
 		if len(cur.matched) >= len(sc.id) {
+			// log.Printf("SKIP prior matched %v", sc)
 			continue
 		}
 
@@ -291,12 +303,14 @@ func (sc *outlineScanner) matchOutline(into *outlineMatch, arena scanio.Arena, p
 			nextArg = cur.nextArg[i]
 		}
 		if nextArg >= len(patterns) {
+			// log.Printf("SKIP no arg %v", sc)
 			continue
 		}
 
 		// if we have a pattern, match it against outline head title content
 		pattern := patterns[nextArg]
 		if pattern == nil {
+			// log.Printf("SKIP no pattern %v", sc)
 			continue
 		}
 
@@ -310,6 +324,7 @@ func (sc *outlineScanner) matchOutline(into *outlineMatch, arena scanio.Arena, p
 		if len(loc) == 0 {
 			continue
 		}
+		// log.Printf("matched pattern#%v:%v loc:%v in %q\n", nextArg, pattern, loc, outlineTitle.Bytes())
 		nextArg++
 
 		// add new matched outline node(s) with a newly opened section
@@ -454,14 +469,32 @@ func (om *outlineMatch) maxNextArg() int {
 }
 
 func (om *outlineMatch) resultInto(dest *outlineMatch, xlate []scanio.Token) []scanio.Token {
+	// defer logs.restore()()
+	// log.Printf("resultInto")
+	// logs.addPrefix("    ")
+	// for j, g := range om.group {
+	// 	if title := om.title[j]; !title.Empty() {
+	// 		log.Printf("res[%v]: $%v %v %q", j, g, om.block[j], title.Bytes())
+	// 	}
+	// }
+	// defer func() {
+	// 	for j, g := range dest.group {
+	// 		if title := dest.title[j]; !title.Empty() {
+	// 			log.Printf("dest[%v]: $%v %v %q", j, g, dest.block[j], title.Bytes())
+	// 		}
+	// 	}
+	// }()
+
 	i := len(om.matched) - 1
 	if i < 0 || om.within[i].id == 0 {
 		return xlate
 	}
 	priorArg := dest.maxNextArg()
 	if nextArg := om.nextArg[i]; nextArg < priorArg {
+		// log.Printf("skip: matched:%v nextArg:%v\n", om.matched[i], nextArg)
 		return xlate
 	} else if nextArg > priorArg {
+		// log.Printf("better: matched:%v nextArg:%v\n", om.matched[i], nextArg)
 		dest.truncate(0)
 		xlate = xlate[:0]
 	}
