@@ -643,6 +643,18 @@ func (blocks *BlockStack) Offset() (n int64) {
 	return n
 }
 
+// Reset clears all receiver state, preparing it to scan a new stream.
+func (blocks *BlockStack) Reset() {
+	blocks.offset = blocks.offset[:0]
+	blocks.block = blocks.block[:0]
+	blocks.id = blocks.id[:0]
+	blocks.nextID = 0
+	blocks.body = blocks.body[:0]
+	blocks.read = blocks.read[:0]
+	blocks.line = blocks.line[:0]
+	blocks.readn = 0
+}
+
 // Len returns how many blocks are currently on the stack.
 func (blocks *BlockStack) Len() int {
 	return len(blocks.id)
