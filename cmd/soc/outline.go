@@ -29,11 +29,15 @@ type outlineScanner struct {
 func (sc *outlineScanner) Reset(src io.Reader) {
 	sc.Scanner = bufio.NewScanner(src)
 	sc.Scanner.Split(sc.block.Scan)
+	sc.block.Reset()
+	sc.truncate(0)
+	sc.titled = false
 }
 
 func (sc *outlineScanner) Scan() bool {
 	if !sc.Scanner.Scan() {
 		sc.truncate(0)
+		sc.titled = false
 		return false
 	}
 	sc.outline.sync(sc.block)
