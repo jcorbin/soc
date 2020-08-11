@@ -251,13 +251,13 @@ func (sec section) header() byteRange {
 	return sec.byteRange
 }
 
-func (sc *outlineScanner) openSection(ofType ...scandown.BlockType) (sec section) {
+func (sc *outlineScanner) openSection() (sec section) {
 	sec.start = sc.block.Offset()
 	sec.body = sec.byteRange
 	sec.body.start += int64(len(sc.Bytes()))
 	sec.end = -1
 	for i := len(sc.id) - 1; i >= 0; i-- {
-		if len(ofType) == 0 || isOneOfType(sc.outline.block[i].Type, ofType...) {
+		if isOneOfType(sc.outline.block[i].Type, scandown.Heading, scandown.Item) {
 			sec.id = sc.id[i]
 			break
 		}
