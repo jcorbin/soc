@@ -11,6 +11,40 @@ import (
 	"github.com/jcorbin/soc/scandown"
 )
 
+// outline represents document tree structure under a scandown.BlockStack scan,
+// as defined by Headings, Lists, and Items; ignores any structure under
+// Blockquote.
+//
+// Each outline item has a title populated from its first Paragraph (all bytes
+// of a Heading). Each item may contribute to an ever narrowing time stamp.
+// Most commonly, this will simply be a Heading with the current day; some
+// example content:
+//
+// 	# 2020-08-11
+//
+// 	- something
+// 	- this is the title
+//
+// 	  additional non-title content
+//
+// 	# 2020 a year section
+//
+// 	## 07 a month section
+//
+// 	### 04 a day section
+//
+// 	- 12:00 list item titles can also contribute to the time
+//
+// Should result in the following leaf [time]s and "title"s:
+//
+// 	[2020-08-11] "something"
+// 	[2020-08-11] "this is the title"
+// 	[2020] "a year section"
+// 	[2020-07] "a month section"
+// 	[2020-07-04] "a day section"
+// 	[2020-07-04T12:00] "list item titles can also contribute to the time"
+//
+// See outlineScanner for an example code.
 type outline struct {
 	titled bool                    // true only if the last Scan recognized a new outline title
 	id     []int                   // block ID
@@ -20,12 +54,25 @@ type outline struct {
 	arena  scanio.ByteArena        // title storage
 }
 
+// outlineScanner orchestrates a low level scanner, block stack, and outline.
+// See outline for detail on what an outline adds to the block stack.
+//
+// Example:
+//
+// 	var out outlineScanner
+// 	out.Reset(src)
+// 	for out.Scan() {
+// 		if out.titled {
+// 			log.Println(out)
+// 		}
+// 	}
 type outlineScanner struct {
 	*bufio.Scanner
 	block scandown.BlockStack
 	outline
 }
 
+// Reset (re)initializes receiver state to scan a new outline from src.
 func (sc *outlineScanner) Reset(src io.Reader) {
 	sc.Scanner = bufio.NewScanner(src)
 	sc.Scanner.Split(sc.block.Scan)
@@ -34,6 +81,8 @@ func (sc *outlineScanner) Reset(src io.Reader) {
 	sc.titled = false
 }
 
+// Scan scans another block from the source stream, and then updates outline
+// state to reflect any newly encountered outline structure.
 func (sc *outlineScanner) Scan() bool {
 	if !sc.Scanner.Scan() {
 		sc.truncate(0)
@@ -44,6 +93,7 @@ func (sc *outlineScanner) Scan() bool {
 	return true
 }
 
+// lastTime returns the most fine-grained time parsed so far.
 func (out outline) lastTime() (t isotime.GrainedTime) {
 	if i := len(out.time) - 1; i >= 0 {
 		t = out.time[i]
@@ -51,6 +101,14 @@ func (out outline) lastTime() (t isotime.GrainedTime) {
 	return t
 }
 
+// heading returns the n-th non-empty title token, and whether or not it's the
+// current outline leaf (just scanned if out.titled).
+//
+// The n value can be though of as "effective level", which can differ
+// substantially from any actual Heading levels involved.
+//
+// NOTE if a heading (or item) title contains only a date/time component, it
+// does not count towards deepening the outline tree.
 func (out outline) heading(n int) (_ scanio.ByteArenaToken, isLast bool) {
 	m := 0
 	for i := 0; i < len(out.title); i++ {
@@ -63,6 +121,11 @@ func (out outline) heading(n int) (_ scanio.ByteArenaToken, isLast bool) {
 	return scanio.ByteArenaToken{}, false
 }
 
+// Format provides a textual representation of the current outline state.
+// Any time is printed as a prefix in square brackets.
+// Up to the first 50 characters of each title are then printed.
+// When formatted with the "+" flag, also prints block and time data from each
+// outline item.
 func (out outline) Format(f fmt.State, _ rune) {
 	first := true
 
@@ -240,6 +303,24 @@ func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.Grain
 	return t, title
 }
 
+// section represents a range within a document outline, containing a header
+// (which provides any outline time and tille) and a, maybe empty, body of
+// additional content.
+//
+// Example, search for some interesting sections:
+//
+//	var (
+//		interesting []section
+//		out         outlineScanner
+//	)
+// 	for out.Reset(src); out.Scan(); {
+// 		for i, sec := range interesting {
+// 			interesting[i] = out.updateSection(sec)
+// 		}
+// 		if out.titled && want(out) {
+// 			interesting = append(interesting, out.openSection())
+// 		}
+// 	}
 type section struct {
 	byteRange
 	body byteRange
@@ -251,7 +332,15 @@ func (sec section) header() byteRange {
 	return sec.byteRange
 }
 
+// openSection returns a new section whose heading is the current block just scanned.
+// The section's id is anchored to the last Heading or Item block; for a
+// Heading, this should be the same as the current block, but should differ for
+// List Items.
+// Returns the zero section if sc.titled is false.
 func (sc *outlineScanner) openSection() (sec section) {
+	if !sc.titled {
+		return section{}
+	}
 	sec.start = sc.block.Offset()
 	sec.body = sec.byteRange
 	sec.body.start += int64(len(sc.Bytes()))
@@ -265,6 +354,8 @@ func (sc *outlineScanner) openSection() (sec section) {
 	return sec
 }
 
+// within returns true only if the given section's id is part of the current
+// outline path.
 func (sc *outlineScanner) within(sec section) bool {
 	for _, id := range sc.outline.id {
 		if id == sec.id {
@@ -274,6 +365,9 @@ func (sc *outlineScanner) within(sec section) bool {
 	return false
 }
 
+// updateSection updates the given section, ending it at the current scan
+// offset if it was still open, but is no longer part of the current outline
+// path.
 func (sc *outlineScanner) updateSection(sec section) section {
 	// skip if not open or ended
 	if sec.id == 0 || sec.end >= 0 {
