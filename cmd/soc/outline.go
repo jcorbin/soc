@@ -11,14 +11,23 @@ import (
 	"github.com/jcorbin/soc/scandown"
 )
 
+type outline struct {
+	titled bool                    // true only if the last Scan recognized a new outline title
+	id     []int                   // block ID
+	block  []scandown.Block        // block definition
+	time   []isotime.GrainedTime   // time parsed from block title prefixes
+	title  []scanio.ByteArenaToken // title remnants (after time)
+	arena  scanio.ByteArena        // title storage
+}
+
 type outlineScanner struct {
 	*bufio.Scanner
 	block scandown.BlockStack
 	outline
 }
 
-func (sc *outlineScanner) Reset(r io.Reader) {
-	sc.Scanner = bufio.NewScanner(r)
+func (sc *outlineScanner) Reset(src io.Reader) {
+	sc.Scanner = bufio.NewScanner(src)
 	sc.Scanner.Split(sc.block.Scan)
 }
 
@@ -31,32 +40,23 @@ func (sc *outlineScanner) Scan() bool {
 	return true
 }
 
-type outline struct {
-	id     []int
-	block  []scandown.Block
-	time   []isotime.GrainedTime
-	title  []scanio.ByteArenaToken
-	titled bool
-	arena  scanio.ByteArena
-}
-
-func (out outline) heading(level int) (_ scanio.ByteArenaToken, isLast bool) {
-	n := 0
-	for i := 0; i < len(out.title); i++ {
-		if token := out.title[i]; !token.Empty() {
-			if n++; n == level {
-				return token, i+1 == len(out.title)
-			}
-		}
-	}
-	return scanio.ByteArenaToken{}, false
-}
-
 func (out outline) lastTime() (t isotime.GrainedTime) {
 	if i := len(out.time) - 1; i >= 0 {
 		t = out.time[i]
 	}
 	return t
+}
+
+func (out outline) heading(n int) (_ scanio.ByteArenaToken, isLast bool) {
+	m := 0
+	for i := 0; i < len(out.title); i++ {
+		if token := out.title[i]; !token.Empty() {
+			if m++; m == n {
+				return token, i+1 == len(out.title)
+			}
+		}
+	}
+	return scanio.ByteArenaToken{}, false
 }
 
 func (out outline) Format(f fmt.State, _ rune) {
