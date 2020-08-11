@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-07
+# 2020-08-11
 
 ## TODO
 
@@ -99,6 +99,19 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scandown]
+  - add `BlockStack.Reset`, allowing more reliable re-use of a stack
+- [cmd/soc]
+  - add user docs to `outline`, `outlineScanner`, and `section`
+  - made several code improvements provoked by doc writing
+
+
+# 2020-08-07
+
+- [cmd/soc]
+  - [dev] factored out outline matching structure and method, nearly ready to
+    finally add items
 
 # 2020-08-06
 
