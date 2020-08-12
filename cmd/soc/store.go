@@ -398,6 +398,12 @@ func (br byteRange) sub(other byteRange) (head, tail byteRange) {
 	return
 }
 
+func (br byteRange) add(offset int64) byteRange {
+	br.start += offset
+	br.end += offset
+	return br
+}
+
 // TODO eventually unify readState/byteRange into a file-backed scanio arena
 type readState struct {
 	ReadAtCloser

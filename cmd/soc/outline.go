@@ -327,6 +327,12 @@ type section struct {
 	id   int
 }
 
+func (sec section) add(offset int64) section {
+	sec.byteRange = sec.byteRange.add(offset)
+	sec.body = sec.body.add(offset)
+	return sec
+}
+
 func (sec section) header() byteRange {
 	sec.end = sec.body.start
 	return sec.byteRange
