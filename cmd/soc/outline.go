@@ -122,7 +122,7 @@ func (out outline) heading(n int) (_ scanio.ByteArenaToken, isLast bool) {
 }
 
 // Format provides a textual representation of the current outline state.
-// Any time is printed as a prefix in square brackets.
+// Any time is printed as a prefix.
 // Up to the first 50 characters of each title are then printed.
 // When formatted with the "+" flag, also prints block and time data from each
 // outline item.
@@ -131,7 +131,7 @@ func (out outline) Format(f fmt.State, _ rune) {
 
 	if !f.Flag('+') {
 		if t := out.time[len(out.time)-1]; t.Grain() > 0 {
-			fmt.Fprintf(f, "[%v]", t)
+			fmt.Fprintf(f, "%v", t)
 			first = false
 		}
 	}

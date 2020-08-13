@@ -47,7 +47,7 @@ func Test_ui(t *testing.T) {
 		cmd([]string{"today"}, expectLines(
 			"Created new Today section at top of stream",
 			"",
-			"[2020-07-23]",
+			"# 2020-07-23",
 			"1. TODO",
 			"2. WIP",
 			"3. Done",
@@ -77,18 +77,18 @@ func Test_ui(t *testing.T) {
 		),
 
 		cmd([]string{"list"}, expectLines(
-			"1. [2020-07-23] TODO",
-			"2. [2020-07-23] WIP",
-			"3. [2020-07-23] Done",
-			"4. [2020-07-22] different things",
+			"1. 2020-07-23 TODO",
+			"2. 2020-07-23 WIP",
+			"3. 2020-07-23 Done",
+			"4. 2020-07-22 different things",
 		)),
 
 		// tomorrow
 		24*time.Hour,
 		cmd([]string{"today"}, expectLines(
-			`Created Today by rolling "[2020-07-23]" forward`,
+			`Created Today by rolling "2020-07-23" forward`,
 			"",
-			"[2020-07-24]",
+			"# 2020-07-24",
 			"1. TODO",
 			"2. TODO the other thing",
 			"3. WIP",
@@ -110,7 +110,7 @@ func Test_ui(t *testing.T) {
 		)),
 
 		cmd([]string{"todo"}, expectLines(
-			"[2020-07-24] TODO",
+			"# 2020-07-24 TODO",
 			"1. the other thing",
 		)),
 	)

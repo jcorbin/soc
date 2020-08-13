@@ -126,7 +126,7 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 		// }
 		// _, err := io.Copy(res, src)
 
-		fmt.Fprintf(res, "%s\n", title)
+		fmt.Fprintf(res, "# %s\n", title)
 		return printOutline(res, src)
 	}
 
