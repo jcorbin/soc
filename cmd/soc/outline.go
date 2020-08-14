@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"time"
+	"unicode"
 
 	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/jcorbin/soc/internal/scanio"
@@ -503,4 +505,165 @@ func isOneOfType(t scandown.BlockType, oneOf ...scandown.BlockType) bool {
 		}
 	}
 	return false
+}
+
+func printOutline(to io.Writer, from io.Reader, filters ...outlineFilter) error {
+	var sc outlineScanner
+	filter := outlineFilters(filters...)
+	sc.Reset(from)
+
+	var (
+		id  []int
+		n   []int
+		w   []int
+		t   []isotime.GrainedTime
+		buf bytes.Buffer
+
+		prior bool
+	)
+	buf.Grow(1024)
+	for sc.Scan() {
+		if !sc.titled {
+			continue
+		}
+		if filter != nil && !filter.match(&sc.outline) {
+			continue
+		}
+
+		// sync scanned ID state:
+		// - id[i:] are the "exited" nodes, no longer on the scan stack
+		// - sc.id[i:] are the "entered" nodes, new on the scan stack this round
+		var i int
+		id, i = updateIDs(id, sc.id)
+		if i < len(n) {
+			n = n[:i+1] // truncate exited levels, but carry level count
+		} else {
+			n = n[:i] // truncate exited levels
+		}
+		w = w[:i] // truncate exited widths
+		t = t[:i] // truncate exited times
+
+		// add entered nodes, printing lines
+		for ; i < len(sc.id); i++ {
+			if i < len(n) {
+				n[i]++ // increment level carried from above truncation
+			} else {
+				n = append(n, 1) // start a new level count
+			}
+			w = append(w, 0) // width starts out 0, will be filled in if we format an ordinal
+
+			level := 0
+			nt := sc.time[i]
+			t = append(t, nt)
+			if nt.Grain() > 0 {
+				if i == 0 {
+					level++
+				} else {
+					for j := i - 1; j >= 0; j-- {
+						ot := t[j]
+						if ot.Equal(nt) {
+							break
+						}
+						level++
+						if ot.Grain() == 0 {
+							break
+						}
+					}
+				}
+			}
+
+			title := sc.title[i].Bytes()
+			buf.Grow(len(title) / 4 * 5) // ensure 25% over allocation
+
+			in := 0
+			if level > 0 {
+				if prior {
+					buf.WriteByte('\n') // hard paragraph break
+				}
+				// write a temporal header item
+				for i := 0; i < level; i++ {
+					buf.WriteByte('#')
+				}
+				buf.WriteByte(' ')
+				fmt.Fprint(&buf, nt)
+			} else if len(title) == 0 {
+				continue
+			} else {
+				in = sumInts(w)
+			}
+
+			for i := 0; i < in; i++ {
+				buf.WriteByte(' ')
+			}
+			var nw int
+			if level == 0 {
+				// write an ordinal bullet item
+				nw, _ = fmt.Fprintf(&buf, "%v. ", n[i])
+			}
+			const lineWidth = 80
+			title = breakLineInto(&buf, title, lineWidth)
+			in += nw
+			w[i] = nw
+			for len(title) > 0 {
+				for i := 0; i < in; i++ {
+					buf.WriteByte(' ')
+				}
+				title = breakLineInto(&buf, title, lineWidth)
+			}
+
+			// flush formatted item buffer
+			prior = true
+			if _, err := buf.WriteTo(to); err != nil {
+				return err
+			}
+		}
+	}
+
+	return sc.Err()
+}
+
+func breakLineInto(buf *bytes.Buffer, b []byte, width int) []byte {
+	var line []byte
+	if line = b; len(line) > width {
+		i := width
+		if i = bytes.LastIndexFunc(line[:i+1], isNonWord); i < 0 {
+			i = bytes.IndexFunc(line, isNonWord)
+		}
+		if i > 0 {
+			line = line[:i]
+		}
+	}
+	buf.Write(line)
+	buf.WriteByte('\n')
+	return b[len(line):]
+}
+
+func isNonWord(r rune) bool {
+	return unicode.IsSpace(r) || unicode.IsPunct(r)
+}
+
+func updateIDs(into, from []int) (_ []int, prefix int) {
+	prefix = commonPrefix(into, from)
+	if prefix < len(into) {
+		into = into[:prefix]
+	}
+	into = append(into, from[prefix:]...)
+	return into, prefix
+}
+
+func commonPrefix(a, b []int) (i int) {
+	for i < len(a) && i < len(b) {
+		if a[i] != b[i] {
+			break
+		}
+		i++
+	}
+	return i
+}
+
+func sumInts(ns []int) (t int) {
+	for _, n := range ns {
+		t += n
+	}
+	return t
 }

@@ -77,10 +77,13 @@ func Test_ui(t *testing.T) {
 		),
 
 		cmd([]string{"list"}, expectLines(
-			"1. 2020-07-23 TODO",
-			"2. 2020-07-23 WIP",
-			"3. 2020-07-23 Done",
-			"4. 2020-07-22 different things",
+			"# 2020-07-23",
+			"1. TODO",
+			"2. WIP",
+			"3. Done",
+			"",
+			"# 2020-07-22",
+			"1. different things",
 		)),
 
 		// tomorrow
@@ -90,10 +93,10 @@ func Test_ui(t *testing.T) {
 			"",
 			"# 2020-07-24",
 			"1. TODO",
-			"2. TODO the other thing",
-			"3. WIP",
-			"4. WIP that",
-			"5. Done",
+			"   1. the other thing",
+			"2. WIP",
+			"   1. that",
+			"3. Done",
 		)),
 		expectStream(expectLines(
 			"# 2020-07-24",
