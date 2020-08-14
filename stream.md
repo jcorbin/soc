@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-11
+# 2020-08-14
 
 ## TODO
 
@@ -100,12 +100,41 @@ The first half of `scandown` is now prototyped:
 
 ## Done
 
+- [cmd/soc]
+  - sifted through and coalesced progress since 2020-08-11
+  - got new outline printer past prior tests, adding necessary temporal heading
+    support
+
+# 2020-08-13
+
+- [cmd/soc]
+  - leveled up outline printing from `list` to share with `today`: now printed
+    as a numbered list with sub-lists
+  - dropped brackets from outline time prefix, making it easier to reconstruct
+    a "coalesced heading".
+  - [dev] added support for `outlineMatch` to act as as future `outlineFilter`
+  - [dev] today item service now now prints matched item(s) when all args
+    match, making it a filtered `list`
+  - [dev] TODO all that's left to finish item service is addition (and maybe
+    movement, but may defer that for follow up)
+
+# 2020-08-12
+
+- [cmd/soc]
+  - [dev] got today outline matching to work, with much refactoring on the way
+
+    Added offset tracking so that result section byte ranges are valid to read
+    back without later translation.
+
+    Flattened today control flow to ease understanding and imporve correctness.
+
+# 2020-08-11
+
 - [scandown]
   - add `BlockStack.Reset`, allowing more reliable re-use of a stack
 - [cmd/soc]
   - add user docs to `outline`, `outlineScanner`, and `section`
   - made several code improvements provoked by doc writing
-
 
 # 2020-08-07
 
