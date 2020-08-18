@@ -35,10 +35,50 @@ func (token Token) Text() string {
 	return ""
 }
 
+// Token formats the token under the fmt.Printf family: the %s and %q verbs
+// load the tokens bytes and string print them, or any load error encountered;
+// the %v verb works like %s, unless given the + flag as in "%+v", then a debug
+// form is printed instead with the start/end offsets, and an arena identifier.
+func (token Token) Format(f fmt.State, c rune) {
+	switch c {
+	case 'q':
+		b := token.Bytes()
+		if prec, ok := f.Precision(); ok {
+			fmt.Fprintf(f, "%.*q", prec, b)
+		} else {
+			fmt.Fprintf(f, "%q", b)
+		}
+
+	case 'v':
+		if f.Flag('+') {
+			fmt.Fprintf(f, "%T(%p)@%v:%v", token.arena, token.arena, token.start, token.end)
+			return
+		}
+		fallthrough
+	case 's':
+		b := token.Bytes()
+		if prec, ok := f.Precision(); ok {
+			fmt.Fprintf(f, "%.*s", prec, b)
+		} else {
+			f.Write(b)
+		}
+
+	}
+}
+
 // Empty returns true if the token references no 0 bytes.
 func (token Token) Empty() bool {
 	return token.end == token.start
 }
+
+// Start returns the token start offset.
+func (token Token) Start() int { return token.start }
+
+// End returns the token end offset.
+func (token Token) End() int { return token.end }
+
+// End returns the token byte length.
+func (token Token) Len() int { return token.len() }
 
 // Slice returns a sub-token of the receiver, acting similarly to token[i:j].
 // Both i and j are token relative, but additionally j may be negative to count
@@ -69,6 +109,8 @@ func (token Token) Slice(i, j int) Token {
 }
 
 type byteRange struct{ start, end int }
+
+func (br byteRange) len() int { return br.end - br.start }
 
 // ByteArena implements an io.Writer into an internal in-memory arena, allowing
 // token handles to be taken against them.
