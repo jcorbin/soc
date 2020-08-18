@@ -2,6 +2,8 @@ package scanio_test
 
 import (
 	"fmt"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -69,3 +71,102 @@ func (sg stringTokenGen) gen() Token {
 	bar.WriteString(string(sg))
 	return bar.Take()
 }
+
+func Test_arena_back(t *testing.T) {
+	type check struct {
+		start, end int
+		expect     string
+		err        string
+	}
+	checkText := func(start, end int, s string) (c check) {
+		c.start, c.end = start, end
+		c.expect = s
+		return c
+	}
+	checkErr := func(start, end int, s string) (c check) {
+		c.start, c.end = start, end
+		c.err = s
+		return c
+	}
+	for _, tc := range []struct {
+		scenario
+		checks []check
+	}{
+
+		{
+			scenario: smolLorem,
+			checks: []check{
+				checkText(0, 5, "Lorem"),
+				checkErr(0, 33, "token size exceeds arena buffer capacity"),
+				checkText(10, 40, "m dolor sit amet, consectetur "),
+				checkErr(10, 50, "token size exceeds arena buffer capacity"),
+				checkText(74, 80, "luctus"),
+				checkText(151, 155, "non,"),
+				checkText(884, 902, "felis et posuere.\n"),
+				checkErr(884, 903, io.EOF.Error()),
+			},
+		},
+
+		{
+			scenario: defLorem,
+			checks: []check{
+				checkText(0, 74, "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Maecenas aliquam\n"),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ta := tc.setup()
+			for i, c := range tc.checks {
+				t.Run(fmt.Sprintf("[%v] @%v:%v", i, c.start, c.end), func(t *testing.T) {
+					tok := ta.Ref(c.start, c.end)
+					if s, err := tok.Text(); c.err != "" {
+						if !assert.EqualError(t, err, c.err, "expected error") {
+							t.Logf("text: %q", s)
+						}
+					} else if assert.NoError(t, err, "unexpected error") {
+						assert.Equal(t, c.expect, s)
+					}
+				})
+			}
+		})
+	}
+}
+
+type scenario struct {
+	name    string
+	back    io.ReaderAt
+	backErr error
+	bufSize int
+}
+
+func (sc scenario) setup() (ta TestArena) {
+	ta.SetBacking(sc.back)
+	ta.SetBackErr(sc.backErr)
+	ta.SetBufSize(sc.bufSize)
+	return ta
+}
+
+var smolLorem = scenario{
+	name:    "lorem w/ 32 byte buffer",
+	back:    strings.NewReader(loremIpsum),
+	bufSize: 32,
+}
+
+var defLorem = scenario{
+	name: "lorem w/ default size buffer",
+	back: strings.NewReader(loremIpsum),
+}
+
+const loremIpsum = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Maecenas aliquam
+luctus enim, vel porta orci egestas eu. Fusce metus neque, elementum ut enim
+non, commodo blandit eros. Nunc aliquam, magna consequat feugiat venenatis,
+lectus mauris aliquam ipsum, quis dictum lorem nisi sed lorem. Curabitur
+gravida iaculis velit ut posuere. Vestibulum at vehicula mi. Curabitur ut magna
+enim. Vestibulum scelerisque luctus neque vitae euismod. Proin imperdiet purus
+et mauris consectetur, eget malesuada velit commodo. Cras eleifend egestas ante
+vitae finibus. Cras tempus ipsum sed nunc auctor rutrum. Aenean rhoncus lorem
+non pellentesque vehicula. Nunc in arcu blandit, tristique ex vel, tincidunt
+mauris. Donec a ornare ipsum. Phasellus placerat tincidunt augue quis tempus.
+Class aptent taciti sociosqu ad litora torquent per conubia nostra, per
+inceptos himenaeos. Cras scelerisque id felis et posuere.
+`

@@ -3,27 +3,133 @@ package scanio
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 )
 
 var (
 	errNoArena   = errors.New("token has no arena")
+	errNoBacking = errors.New("arena has no backing store")
 	errLargeRead = errors.New("token size exceeds arena buffer capacity")
 )
 
+// DefaultBufferSize is the default in-memory buffer size to allocate when
+// loading under an arena with backing storage, e.g. FileArena.
+const DefaultBufferSize = 32 * 1024
+
 type arena struct {
-	buf []byte // internal buffer
+	buf    []byte // internal buffer
+	offset int    // start of buf within any back
+
+	back    io.ReaderAt // backing storage
+	backErr error       // backing storage error
+	size    int64       // size of backing storage
+	known   bool        // true if we've checked for size
+}
+
+func (ar *arena) setBufSize(bufSize int) {
+	if bufSize > 0 {
+		ar.buf = make([]byte, 0, bufSize)
+	} else {
+		ar.buf = nil
+	}
+}
+
+func (ar *arena) setBack(back io.ReaderAt) {
+	ar.back = back
+	ar.backErr = nil
+	ar.known = false
 }
 
 func (ar *arena) load(br byteRange) (rel byteRange, err error) {
 	buf := ar.buf
-	rel = br
+	rel = br.add(-ar.offset) // relativize
 
 	// service from buffer if possible
 	if rel.start >= 0 && rel.end <= len(buf) {
 		return rel, nil
 	}
 
-	return byteRange{}, fmt.Errorf("cannot load range %v", br)
+	// any backing store error
+	{
+		errBack := ar.backErr
+		if errBack == nil && ar.back == nil {
+			errBack = errNoBacking
+		}
+		if errBack != nil {
+			return byteRange{}, fmt.Errorf("cannot load range %v: %w", br, errBack)
+		}
+	}
+
+	// truncate up to buffer capacity
+	n := rel.len()
+	if m := cap(buf); n <= m {
+		buf = buf[:m]
+	} else if m == 0 {
+		if n > DefaultBufferSize {
+			n = DefaultBufferSize
+		}
+		buf = make([]byte, DefaultBufferSize)
+	} else {
+		n = m
+	}
+	ar.buf = buf[:0] // invalid until read succeeds below
+
+	if offset := ar.offsetFor(ar.offset, len(buf), byteRange{br.start, br.start + n}); offset < 0 {
+		ar.offset = 0
+	} else {
+		ar.offset = offset
+	}
+
+	// do the read
+	n, err = ar.back.ReadAt(buf, int64(ar.offset))
+	buf = buf[:n]
+	ar.buf = buf
+
+	// re-relativize and truncate
+	rel.start = br.start - ar.offset
+	if rel.end = rel.start + br.len(); rel.end > len(buf) {
+		rel.end = len(buf)
+	} else if err == io.EOF {
+		err = nil // erase EOF error as long as we didn't truncate the request
+	}
+
+	return rel, err
+}
+
+func (ar *arena) offsetFor(prior, bufLen int, req byteRange) int {
+	if !ar.known {
+		ar.size = readerAtSize(ar.back)
+		ar.known = true
+	}
+
+	// center any buffer slack around the requested range
+	offset := req.start/2 + req.end/2 - bufLen/2
+
+	// if sz := ar.size; sz != 0 {
+	// 	// but no sense targeting past EOF when we known better
+	// 	if rem := int(sz) - offset + req.len(); rem > 0 {
+	// 		offset -= rem
+	// 	}
+	// }
+
+	return offset
+}
+
+func readerAtSize(ra io.ReaderAt) int64 {
+	type stater interface{ Stat() (os.FileInfo, error) }
+	if st, ok := ra.(stater); ok {
+		if info, err := st.Stat(); err == nil {
+			return info.Size()
+		}
+	}
+
+	type sizer interface{ Size() int64 }
+	if sz, ok := ra.(sizer); ok {
+		return sz.Size()
+	}
+
+	return 0
 }
 
 // Token is a handle to a range of bytes under an arena.
@@ -134,6 +240,12 @@ func (token Token) Slice(i, j int) Token {
 type byteRange struct{ start, end int }
 
 func (br byteRange) len() int { return br.end - br.start }
+
+func (br byteRange) add(n int) byteRange {
+	br.start += n
+	br.end += n
+	return br
+}
 
 // ByteArena implements an io.Writer into an internal in-memory arena, allowing
 // token handles to be taken against them.
