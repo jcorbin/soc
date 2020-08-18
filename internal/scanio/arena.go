@@ -23,7 +23,7 @@ func (arena *ByteArena) WriteString(s string) (int, error) {
 
 // Take returns a token referencing any bytes written into the arena since the
 // last taken token.
-func (arena *ByteArena) Take() (token ByteArenaToken) {
+func (arena *ByteArena) Take() (token Token) {
 	token.arena = arena
 	token.start = arena.cur
 	token.end = len(arena.buf)
@@ -37,8 +37,8 @@ func (arena *ByteArena) Reset() {
 	arena.cur = 0
 }
 
-// PruneTo discards any bytes from the arena that aren't reference by a remain token.
-func (arena *ByteArena) PruneTo(remain []ByteArenaToken) {
+// PruneTo discards any bytes from the arena that aren't reference by any remaining token.
+func (arena *ByteArena) PruneTo(remain []Token) {
 	offset := 0
 	for _, token := range remain {
 		if token.arena == arena {
@@ -51,19 +51,18 @@ func (arena *ByteArena) PruneTo(remain []ByteArenaToken) {
 	arena.cur = offset
 }
 
-// Truncate the token's arena so that it only contains bytes up to, but
-// excluding, the receiver token.
-// Panics if the token's bytes have already been discarded.
-func (token ByteArenaToken) Truncate() {
-	token.arena.buf = token.arena.buf[:token.start]
-	token.arena.cur = token.start
+// TruncateTo discards bytes from the receiver arena up to and excluding the given token.
+// Panics if the token is foreign or if its bytes have already been discarded.
+func (arena *ByteArena) TruncateTo(token Token) {
+	if token.arena != arena {
+		panic("ByteArena.TruncateTo given a foreign token")
+	}
+	arena.buf = arena.buf[:token.start]
+	arena.cur = token.start
 }
 
-// ByteArenaToken is a handle to a range of bytes written into a ByteArena.
-//
-// NOTE it may become invalid when the arena is Reset() or when an earlier
-// token is Truncate()d
-type ByteArenaToken struct {
+// Token is a handle to a range of bytes under an arena.
+type Token struct {
 	byteRange
 	arena *ByteArena
 }
@@ -72,7 +71,7 @@ type ByteArenaToken struct {
 //
 // NOTE this is a slice into the arena's internal buffer, so the caller MUST
 // not retain the returned slice, but should copy out of it instead if necessary.
-func (token ByteArenaToken) Bytes() []byte {
+func (token Token) Bytes() []byte {
 	if token.arena != nil {
 		if buf := token.arena.buf; token.start <= len(buf) && token.end <= len(buf) {
 			return buf[token.start:token.end]
@@ -82,7 +81,7 @@ func (token ByteArenaToken) Bytes() []byte {
 }
 
 // Text returns a string copy of the token bytes from the internal arena buffer.
-func (token ByteArenaToken) Text() string {
+func (token Token) Text() string {
 	if token.arena != nil {
 		if buf := token.arena.buf; token.start <= len(buf) && token.end <= len(buf) {
 			return string(buf[token.start:token.end])
@@ -92,7 +91,7 @@ func (token ByteArenaToken) Text() string {
 }
 
 // Empty returns true if the token references no 0 bytes.
-func (token ByteArenaToken) Empty() bool {
+func (token Token) Empty() bool {
 	return token.end == token.start
 }
 
@@ -101,7 +100,7 @@ func (token ByteArenaToken) Empty() bool {
 // back from the end of token.
 // Panics if the token has no arena (as in the zero value case), or if the
 // resulting slice range is invalid.
-func (token ByteArenaToken) Slice(i, j int) ByteArenaToken {
+func (token Token) Slice(i, j int) Token {
 	if token.arena == nil {
 		panic("cannot slice zero valued token")
 	}

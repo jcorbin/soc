@@ -144,7 +144,7 @@ type presentDay struct {
 	readState
 	date     isotime.GrainedTime
 	sections []section
-	titles   []scanio.ByteArenaToken
+	titles   []scanio.Token
 	arena    scanio.ByteArena
 }
 
@@ -206,7 +206,7 @@ func (pres *presentDay) load(st store) error {
 		base := int(firstVarSection)
 		max := base + pres.sectionPattern.NumSubexp()
 		pres.sections = make([]section, base, max)
-		pres.titles = make([]scanio.ByteArenaToken, base, max)
+		pres.titles = make([]scanio.Token, base, max)
 		pres.arena.Reset()
 	}
 
@@ -273,7 +273,7 @@ func (pres *presentDay) load(st store) error {
 			j := int(firstVarSection) + i
 			if n := j - len(pres.sections) + 1; n > 0 {
 				pres.sections = append(pres.sections, make([]section, n)...)
-				pres.titles = append(pres.titles, make([]scanio.ByteArenaToken, n)...)
+				pres.titles = append(pres.titles, make([]scanio.Token, n)...)
 			}
 			mark(presentSection(j))
 		}

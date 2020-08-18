@@ -48,12 +48,12 @@ import (
 //
 // See outlineScanner for an example code.
 type outline struct {
-	titled bool                    // true only if the last Scan recognized a new outline title
-	id     []int                   // block ID
-	block  []scandown.Block        // block definition
-	time   []isotime.GrainedTime   // time parsed from block title prefixes
-	title  []scanio.ByteArenaToken // title remnants (after time)
-	arena  scanio.ByteArena        // title storage
+	titled bool                  // true only if the last Scan recognized a new outline title
+	id     []int                 // block ID
+	block  []scandown.Block      // block definition
+	time   []isotime.GrainedTime // time parsed from block title prefixes
+	title  []scanio.Token        // title remnants (after time)
+	arena  scanio.ByteArena      // title storage
 }
 
 // outlineScanner orchestrates a low level scanner, block stack, and outline.
@@ -111,7 +111,7 @@ func (out outline) lastTime() (t isotime.GrainedTime) {
 //
 // NOTE if a heading (or item) title contains only a date/time component, it
 // does not count towards deepening the outline tree.
-func (out outline) heading(n int) (_ scanio.ByteArenaToken, isLast bool) {
+func (out outline) heading(n int) (_ scanio.Token, isLast bool) {
 	m := 0
 	for i := 0; i < len(out.title); i++ {
 		if token := out.title[i]; !token.Empty() {
@@ -120,7 +120,7 @@ func (out outline) heading(n int) (_ scanio.ByteArenaToken, isLast bool) {
 			}
 		}
 	}
-	return scanio.ByteArenaToken{}, false
+	return scanio.Token{}, false
 }
 
 // Format provides a textual representation of the current outline state.
@@ -182,7 +182,7 @@ func (out outline) Format(f fmt.State, _ rune) {
 }
 
 func (out *outline) sync(blocks scandown.BlockStack) {
-	var title scanio.ByteArenaToken
+	var title scanio.Token
 	out.titled = false
 
 	i := 0 // <= len(out.id)
@@ -249,7 +249,7 @@ func (out *outline) sync(blocks scandown.BlockStack) {
 	}
 }
 
-func (out *outline) push(id int, block scandown.Block, t isotime.GrainedTime, title scanio.ByteArenaToken) {
+func (out *outline) push(id int, block scandown.Block, t isotime.GrainedTime, title scanio.Token) {
 	out.id = append(out.id, id)
 	out.block = append(out.block, block)
 	out.time = append(out.time, t)
@@ -264,7 +264,7 @@ func (out *outline) truncate(i int) {
 	out.arena.PruneTo(out.title)
 }
 
-func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.GrainedTime, scanio.ByteArenaToken) {
+func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.GrainedTime, scanio.Token) {
 	// TODO scan inline content => words
 	sc := bufio.NewScanner(r) // TODO internal rescanner
 	sc.Split(bufio.ScanWords)
