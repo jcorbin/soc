@@ -39,12 +39,15 @@ func (arena *ByteArena) Reset() {
 
 // PruneTo discards any bytes from the arena that aren't reference by any remaining token.
 func (arena *ByteArena) PruneTo(remain []Token) {
+	for _, token := range remain {
+		if ar := token.arena; ar != nil && ar != arena {
+			panic("ByteArena.PruneTo given a foreign token")
+		}
+	}
 	offset := 0
 	for _, token := range remain {
-		if token.arena == arena {
-			if offset < token.end {
-				offset = token.end
-			}
+		if offset < token.end {
+			offset = token.end
 		}
 	}
 	arena.buf = arena.buf[:offset]
