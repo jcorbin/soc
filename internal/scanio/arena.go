@@ -1,9 +1,29 @@
 package scanio
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+var (
+	errNoArena   = errors.New("token has no arena")
+	errLargeRead = errors.New("token size exceeds arena buffer capacity")
+)
 
 type arena struct {
 	buf []byte // internal buffer
+}
+
+func (ar *arena) load(br byteRange) (rel byteRange, err error) {
+	buf := ar.buf
+	rel = br
+
+	// service from buffer if possible
+	if rel.start >= 0 && rel.end <= len(buf) {
+		return rel, nil
+	}
+
+	return byteRange{}, fmt.Errorf("cannot load range %v", br)
 }
 
 // Token is a handle to a range of bytes under an arena.
@@ -16,23 +36,24 @@ type Token struct {
 //
 // NOTE this is a slice into the arena's internal buffer, so the caller MUST
 // not retain the returned slice, but should copy out of it instead if necessary.
-func (token Token) Bytes() []byte {
-	if token.arena != nil {
-		if buf := token.arena.buf; token.start <= len(buf) && token.end <= len(buf) {
-			return buf[token.start:token.end]
-		}
+func (token Token) Bytes() ([]byte, error) {
+	if token.arena == nil {
+		return nil, errNoArena
 	}
-	return nil
+	rel, err := token.arena.load(token.byteRange)
+	if err != nil {
+		return nil, err
+	}
+	if rel.len() < token.len() {
+		err = errLargeRead
+	}
+	return token.arena.buf[rel.start:rel.end], err
 }
 
 // Text returns a string copy of the token bytes from the internal arena buffer.
-func (token Token) Text() string {
-	if token.arena != nil {
-		if buf := token.arena.buf; token.start <= len(buf) && token.end <= len(buf) {
-			return string(buf[token.start:token.end])
-		}
-	}
-	return ""
+func (token Token) Text() (string, error) {
+	b, err := token.Bytes()
+	return string(b), err
 }
 
 // Token formats the token under the fmt.Printf family: the %s and %q verbs
@@ -42,8 +63,9 @@ func (token Token) Text() string {
 func (token Token) Format(f fmt.State, c rune) {
 	switch c {
 	case 'q':
-		b := token.Bytes()
-		if prec, ok := f.Precision(); ok {
+		if b, err := token.Bytes(); err != nil {
+			fmt.Fprintf(f, "!(ERROR %v)", err)
+		} else if prec, ok := f.Precision(); ok {
 			fmt.Fprintf(f, "%.*q", prec, b)
 		} else {
 			fmt.Fprintf(f, "%q", b)
@@ -56,8 +78,9 @@ func (token Token) Format(f fmt.State, c rune) {
 		}
 		fallthrough
 	case 's':
-		b := token.Bytes()
-		if prec, ok := f.Precision(); ok {
+		if b, err := token.Bytes(); err != nil {
+			fmt.Fprintf(f, "!(ERROR %v)", err)
+		} else if prec, ok := f.Precision(); ok {
 			fmt.Fprintf(f, "%.*s", prec, b)
 		} else {
 			f.Write(b)

@@ -112,7 +112,7 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	}
 
 	sec := ctx.today.sections[tod.index]
-	title := ctx.today.titles[tod.index].Bytes()
+	title := ctx.today.titles[tod.index]
 	var src io.Reader = sec.body.readerWithin(&ctx.today)
 
 	// list if no args; TODO unify with matched all branch below?
@@ -268,7 +268,8 @@ func (pres *presentDay) load(st store) error {
 
 		// match the item title against the recognizer pattern;
 		// the group number that matches provides the sub-section index
-		if i := pres.matchSection(title.Bytes()); i >= 0 {
+		b, _ := title.Bytes()
+		if i := pres.matchSection(b); i >= 0 {
 			// allocate storage for this sub-section and then open
 			j := int(firstVarSection) + i
 			if n := j - len(pres.sections) + 1; n > 0 {
@@ -304,7 +305,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		// write the user a message on the way out
 		defer func() {
 			if pres.sections[yesterdaySection].id != 0 {
-				log.Printf("Created Today by rolling %q forward", pres.titles[yesterdaySection].Bytes())
+				log.Printf("Created Today by rolling %q forward", pres.titles[yesterdaySection])
 			} else {
 				log.Printf("Created new Today section at top of stream")
 			}

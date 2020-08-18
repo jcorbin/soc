@@ -155,23 +155,10 @@ func (out outline) Format(f fmt.State, _ rune) {
 		}
 
 		if !t.Empty() {
-			var trunc string
-			tb := t.Bytes()
-			if len(tb) > 50 {
-				// TODO should be rune aware
-				i := 50
-				for i > 0 && tb[i] != ' ' {
-					i--
-				}
-				tb = tb[:i]
-				trunc = "..."
-			}
-
 			if f.Flag('+') {
-				fmt.Fprintf(f, "(%q%s)", tb, trunc)
+				fmt.Fprintf(f, "(%.50q)", t)
 			} else {
-				f.Write(tb)
-				io.WriteString(f, trunc)
+				fmt.Fprintf(f, "%.50s", t)
 			}
 		} else if f.Flag('+') {
 			if t := out.time[i]; t.Grain() > 0 && (i == 0 || !t.Equal(out.time[i-1])) {
@@ -270,10 +257,10 @@ func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.Grain
 	sc.Split(bufio.ScanWords)
 	scanio.CopyScannerWith(&out.arena, sc, []byte{' '})
 	title := out.arena.Take()
+	tb, _ := title.Bytes()
 
 	// parse any date components from the title prefix
 	{
-		tb := title.Bytes()
 		if st, rb, parsed := t.Parse(tb); parsed {
 			parsedLen := len(tb) - len(rb)
 			title = title.Slice(parsedLen, -1)
@@ -284,7 +271,6 @@ func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.Grain
 	// trim title to just first sentence
 	{
 		// TODO better sentence truncation
-		tb := title.Bytes()
 		rb := tb
 		for i := 1; i < len(rb); i++ {
 			switch rb[i] {
@@ -572,8 +558,8 @@ func printOutline(to io.Writer, from io.Reader, filters ...outlineFilter) error 
 				}
 			}
 
-			title := sc.title[i].Bytes()
-			buf.Grow(len(title) / 4 * 5) // ensure 25% over allocation
+			title := sc.title[i]
+			buf.Grow(title.Len() / 4 * 5) // ensure 25% over allocation
 
 			in := 0
 			if level > 0 {
@@ -586,7 +572,7 @@ func printOutline(to io.Writer, from io.Reader, filters ...outlineFilter) error 
 				}
 				buf.WriteByte(' ')
 				fmt.Fprint(&buf, nt)
-			} else if len(title) == 0 {
+			} else if title.Len() == 0 {
 				continue
 			} else {
 				in = sumInts(w)
@@ -600,15 +586,18 @@ func printOutline(to io.Writer, from io.Reader, filters ...outlineFilter) error 
 				// write an ordinal bullet item
 				nw, _ = fmt.Fprintf(&buf, "%v. ", n[i])
 			}
-			const lineWidth = 80
-			title = breakLineInto(&buf, title, lineWidth)
-			in += nw
-			w[i] = nw
-			for len(title) > 0 {
-				for i := 0; i < in; i++ {
-					buf.WriteByte(' ')
+			{
+				const lineWidth = 80
+				tb, _ := title.Bytes()
+				tb = breakLineInto(&buf, tb, lineWidth)
+				in += nw
+				w[i] = nw
+				for len(tb) > 0 {
+					for i := 0; i < in; i++ {
+						buf.WriteByte(' ')
+					}
+					tb = breakLineInto(&buf, tb, lineWidth)
 				}
-				title = breakLineInto(&buf, title, lineWidth)
 			}
 
 			// flush formatted item buffer
