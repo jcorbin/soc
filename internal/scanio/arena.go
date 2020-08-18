@@ -2,72 +2,14 @@ package scanio
 
 import "fmt"
 
-// ByteArena implements an io.Writer that stores bytes in an internal buffer,
-// allowing token handles to be taken against them.
-type ByteArena struct {
+type arena struct {
 	buf []byte // internal buffer
-	cur int    // write cursor
-}
-
-// Write stores p bytes into the internal buffer, returning len(p) and nil error.
-func (arena *ByteArena) Write(p []byte) (int, error) {
-	arena.buf = append(arena.buf, p...)
-	return len(p), nil
-}
-
-// WriteString stores s bytes into the internal buffer, returning len(s) and nil error.
-func (arena *ByteArena) WriteString(s string) (int, error) {
-	arena.buf = append(arena.buf, s...)
-	return len(s), nil
-}
-
-// Take returns a token referencing any bytes written into the arena since the
-// last taken token.
-func (arena *ByteArena) Take() (token Token) {
-	token.arena = arena
-	token.start = arena.cur
-	token.end = len(arena.buf)
-	arena.cur = token.end
-	return token
-}
-
-// Reset discards all bytes from the arena, resetting the internal buffer for reuse.
-func (arena *ByteArena) Reset() {
-	arena.buf = arena.buf[:0]
-	arena.cur = 0
-}
-
-// PruneTo discards any bytes from the arena that aren't reference by any remaining token.
-func (arena *ByteArena) PruneTo(remain []Token) {
-	for _, token := range remain {
-		if ar := token.arena; ar != nil && ar != arena {
-			panic("ByteArena.PruneTo given a foreign token")
-		}
-	}
-	offset := 0
-	for _, token := range remain {
-		if offset < token.end {
-			offset = token.end
-		}
-	}
-	arena.buf = arena.buf[:offset]
-	arena.cur = offset
-}
-
-// TruncateTo discards bytes from the receiver arena up to and excluding the given token.
-// Panics if the token is foreign or if its bytes have already been discarded.
-func (arena *ByteArena) TruncateTo(token Token) {
-	if token.arena != arena {
-		panic("ByteArena.TruncateTo given a foreign token")
-	}
-	arena.buf = arena.buf[:token.start]
-	arena.cur = token.start
 }
 
 // Token is a handle to a range of bytes under an arena.
 type Token struct {
 	byteRange
-	arena *ByteArena
+	arena *arena
 }
 
 // Bytes returns a reference to the token bytes within the internal arena buffer.
@@ -127,3 +69,72 @@ func (token Token) Slice(i, j int) Token {
 }
 
 type byteRange struct{ start, end int }
+
+// ByteArena implements an io.Writer into an internal in-memory arena, allowing
+// token handles to be taken against them.
+type ByteArena struct {
+	arena
+	cur int // write cursor
+}
+
+// Write stores p bytes into the internal buffer, returning len(p) and nil error.
+func (ba *ByteArena) Write(p []byte) (int, error) {
+	ba.buf = append(ba.buf, p...)
+	return len(p), nil
+}
+
+// WriteString stores s bytes into the internal buffer, returning len(s) and nil error.
+func (ba *ByteArena) WriteString(s string) (int, error) {
+	ba.buf = append(ba.buf, s...)
+	return len(s), nil
+}
+
+// Take returns a token referencing any bytes written into the arena since the
+// last taken token.
+func (ba *ByteArena) Take() (token Token) {
+	token.arena = &ba.arena
+	token.start = ba.cur
+	token.end = len(ba.buf)
+	ba.cur = token.end
+	return token
+}
+
+// Owns returns true only if token refers to the receiver arena.
+func (ba *ByteArena) Owns(token Token) bool {
+	return token.arena == &ba.arena
+}
+
+// Reset discards all bytes from the arena, resetting the internal buffer for reuse.
+func (ba *ByteArena) Reset() {
+	ba.buf = ba.buf[:0]
+	ba.cur = 0
+}
+
+// PruneTo discards any bytes from the arena that aren't referenced by any
+// remaining token.
+// Panics if any of the tokens are foreign.
+func (ba *ByteArena) PruneTo(remain []Token) {
+	for _, token := range remain {
+		if ar := token.arena; ar != nil && ar != &ba.arena {
+			panic("ByteArena.PruneTo given a foreign token")
+		}
+	}
+	offset := 0
+	for _, token := range remain {
+		if offset < token.end {
+			offset = token.end
+		}
+	}
+	ba.buf = ba.buf[:offset]
+	ba.cur = offset
+}
+
+// TruncateTo discards bytes from the receiver arena up to and excluding the given token.
+// Panics if the token is foreign or if its bytes have already been discarded.
+func (ba *ByteArena) TruncateTo(token Token) {
+	if token.arena != &ba.arena {
+		panic("ByteArena.TruncateTo given a foreign token")
+	}
+	ba.buf = ba.buf[:token.start]
+	ba.cur = token.start
+}
