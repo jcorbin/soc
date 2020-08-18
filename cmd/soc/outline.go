@@ -268,7 +268,7 @@ func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.Grain
 	// TODO scan inline content => words
 	sc := bufio.NewScanner(r) // TODO internal rescanner
 	sc.Split(bufio.ScanWords)
-	scanio.CopyTokensWith(&out.arena, sc, []byte{' '})
+	scanio.CopyScannerWith(&out.arena, sc, []byte{' '})
 	title := out.arena.Take()
 
 	// parse any date components from the title prefix
