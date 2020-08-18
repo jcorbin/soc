@@ -8,6 +8,54 @@ import (
 	"sync"
 )
 
+// CopyTokens writes bytes from all given tokens into dest, returning the
+// number of bytes written, and any error that stopped the capy.
+func CopyTokens(dest io.Writer, tokens ...Token) (written int64, err error) {
+	ranges := make([]byteRange, len(tokens))
+	for err == nil && len(tokens) > 0 {
+		arena := tokens[0].arena
+		ranges = ranges[:0]
+		for i := 0; i <= len(tokens); i++ {
+			if i == len(tokens) {
+				tokens = nil
+				break
+			}
+			token := tokens[i]
+			if token.arena != arena {
+				tokens = tokens[i:]
+				break
+			}
+			ranges = append(ranges, token.byteRange)
+		}
+		if arena == nil {
+			continue
+		}
+
+		// elide empty and coalesce adjacent ranges
+		if len(ranges) > 1 {
+			tmp := ranges
+			ranges = ranges[:0]
+			cur := tmp[0]
+			for _, br := range tmp[1:] {
+				if br.empty() {
+					continue
+				} else if br.start == cur.end {
+					cur.end = br.end
+				} else {
+					ranges = append(ranges, cur)
+					cur = br
+				}
+			}
+			ranges = append(ranges, cur)
+		}
+
+		var n int64
+		n, err = arena.writeInto(dest, ranges...)
+		written += n
+	}
+	return written, err
+}
+
 var (
 	errNoArena   = errors.New("token has no arena")
 	errNoBacking = errors.New("arena has no backing store")
@@ -42,6 +90,69 @@ func (ar *arena) setBack(back io.ReaderAt) {
 	ar.back = back
 	ar.backErr = nil
 	ar.known = false
+}
+
+func (ar *arena) writeInto(w io.Writer, brs ...byteRange) (written int64, rerr error) {
+	ar.bufMu.Lock()
+	defer ar.bufMu.Unlock()
+
+	// no backing store and no ranges: just write buffer
+	if ar.back == nil && len(brs) == 0 {
+		n, err := w.Write(ar.buf)
+		if err == nil && n != len(ar.buf) {
+			err = io.ErrShortWrite
+		}
+		return int64(n), err
+	}
+
+	// core logic of the copy loops below
+	copyRange := func(br byteRange) (int, error) {
+		rel, readErr := ar.load(br)
+		if rel.len() == 0 {
+			return 0, readErr
+		}
+		p := ar.buf[rel.start:rel.end]
+		n, writeErr := w.Write(p)
+		if writeErr == nil && n != len(p) {
+			writeErr = io.ErrShortWrite
+		}
+		written += int64(n)
+		if writeErr != nil {
+			return n, writeErr
+		}
+		return n, readErr
+	}
+
+	// suppress any EOF readErr about to be returned
+	defer func() {
+		if rerr == io.EOF {
+			rerr = nil
+		}
+	}()
+
+	// copy loop over all backing store bytes in buf-sized chunks
+	if len(brs) == 0 {
+		for br := (byteRange{0, cap(ar.buf)}); ; {
+			n, err := copyRange(br)
+			if err != nil {
+				return written, err
+			}
+			br = br.add(n)
+		}
+	}
+
+	// copy loop over specific ranges
+	for _, br := range brs {
+		for br.len() > 0 {
+			n, err := copyRange(br)
+			if err != nil {
+				return written, err
+			}
+			br.start += n
+		}
+	}
+
+	return written, nil
 }
 
 func (ar *arena) load(req byteRange) (rel byteRange, err error) {
