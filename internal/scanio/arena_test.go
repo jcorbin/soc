@@ -115,10 +115,15 @@ func Test_arena_back(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ta := tc.setup()
+			ar := tc.setup()
+			if cl, ok := ar.(io.Closer); ok {
+				defer func() {
+					assert.NoError(t, cl.Close(), "unexpected arena close error")
+				}()
+			}
 			for i, c := range tc.checks {
 				t.Run(fmt.Sprintf("[%v] @%v:%v", i, c.start, c.end), func(t *testing.T) {
-					tok := ta.Ref(c.start, c.end)
+					tok := ar.Ref(c.start, c.end)
 					if s, err := tok.Text(); c.err != "" {
 						if !assert.EqualError(t, err, c.err, "expected error") {
 							t.Logf("text: %q", s)
@@ -139,12 +144,22 @@ type scenario struct {
 	bufSize int
 }
 
-func (sc scenario) setup() *TestArena {
-	var ta TestArena
-	ta.SetBacking(sc.back)
-	ta.SetBackErr(sc.backErr)
-	ta.SetBufSize(sc.bufSize)
-	return &ta
+type refArena interface {
+	Ref(start, end int) Token
+}
+
+func (sc scenario) setup() refArena {
+	if sc.bufSize != 0 || sc.backErr != nil {
+		var ta TestArena
+		ta.SetBacking(sc.back)
+		ta.SetBackErr(sc.backErr)
+		ta.SetBufSize(sc.bufSize)
+		return &ta
+	}
+
+	var fa FileArena
+	fa.Reset(sc.back, 0)
+	return &fa
 }
 
 var smolLorem = scenario{

@@ -12,6 +12,7 @@ var (
 	errNoArena   = errors.New("token has no arena")
 	errNoBacking = errors.New("arena has no backing store")
 	errLargeRead = errors.New("token size exceeds arena buffer capacity")
+	errClosed    = errors.New("arena closed")
 )
 
 // DefaultBufferSize is the default in-memory buffer size to allocate when
@@ -101,7 +102,7 @@ func (ar *arena) load(br byteRange) (rel byteRange, err error) {
 
 func (ar *arena) offsetFor(prior, bufLen int, req byteRange) int {
 	if !ar.known {
-		ar.size = readerAtSize(ar.back)
+		ar.size, _ = readerAtSize(ar.back)
 		ar.known = true
 	}
 
@@ -118,20 +119,20 @@ func (ar *arena) offsetFor(prior, bufLen int, req byteRange) int {
 	return offset
 }
 
-func readerAtSize(ra io.ReaderAt) int64 {
+func readerAtSize(ra io.ReaderAt) (int64, bool) {
 	type stater interface{ Stat() (os.FileInfo, error) }
 	if st, ok := ra.(stater); ok {
 		if info, err := st.Stat(); err == nil {
-			return info.Size()
+			return info.Size(), true
 		}
 	}
 
 	type sizer interface{ Size() int64 }
 	if sz, ok := ra.(sizer); ok {
-		return sz.Size()
+		return sz.Size(), true
 	}
 
-	return 0
+	return 0, false
 }
 
 // Token is a handle to a range of bytes under an arena.
@@ -331,4 +332,157 @@ func (ba *ByteArena) TruncateTo(token Token) {
 	defer ba.bufMu.Unlock()
 	ba.buf = ba.buf[:token.start]
 	ba.cur = token.start
+}
+
+// FileArena is an arena backed by file-like storage in addition to a chunk of
+// in-memory buffer. The minimum requirement is a backing io.ReaderAt and
+// (presumed fixed) size.
+//
+// Tokens referents may be constructed against the virtual byte space up to size.
+type FileArena struct {
+	*arena
+}
+
+// Reset (re)initialized the receiver arena to be backed by the given file-like store.
+// If size is 0, back must implement a Size() or Stat() method similar to
+// strings.Reader or os.File. Any such stat error is returned, preempting arena
+// reset.
+// The arena is first Close()ed, ignoring any error, and any internal
+// buffer space is reused.
+// Any extant Tokens become invalid; any attempt to load their contents will
+// result in an error.
+func (fa *FileArena) Reset(back io.ReaderAt, size int64) error {
+	if size == 0 {
+		var ok bool
+		size, ok = readerAtSize(back)
+		if !ok {
+			return fmt.Errorf("%T does not implement Size() or Stat(); must specify size", back)
+		}
+	}
+
+	if fa.arena != nil {
+		fa.bufMu.Lock()
+		defer fa.bufMu.Unlock()
+		_ = fa.doClose() // ignore any close error
+	}
+
+	old := fa.arena
+	fa.arena = &arena{}
+	fa.back = back
+	fa.size = size
+	fa.known = true
+	if old != nil {
+		fa.buf = old.buf[:0]
+	}
+
+	return nil
+}
+
+// Close the FileArena so that future loads return an error.
+// If the backing io.ReaderAt implements io.Closer, it is closed.
+// Returns any prior backing store error or backing close error.
+// It also sets any backing store reference to nil and invalidates any
+// in-memory buffer.
+func (fa *FileArena) Close() error {
+	if fa.arena == nil {
+		return nil
+	}
+	fa.bufMu.Lock()
+	defer fa.bufMu.Unlock()
+	return fa.doClose()
+}
+
+func (fa *FileArena) doClose() error {
+	err := fa.backErr
+	if err == errClosed {
+		err = nil
+	}
+	if cl, ok := fa.back.(io.Closer); ok {
+		if cerr := cl.Close(); err == nil {
+			fa.backErr = errClosed
+			err = cerr
+		}
+	} else if fa.backErr == nil {
+		fa.backErr = errClosed
+	}
+	fa.back = nil
+	fa.offset = 0
+	fa.buf = fa.buf[:0]
+	return err
+}
+
+// Size returns the, presumably fixed, size of the backing storage
+func (fa *FileArena) Size() int64 {
+	if fa.arena == nil {
+		return 0
+	}
+	fa.bufMu.Lock()
+	defer fa.bufMu.Unlock()
+	return fa.size
+}
+
+// Ref return a referent token within virtual byte space up to size.
+// Its Bytes() will either be service from an in-memory buffer, or read and
+// cached for future access.
+// The returned token byte range is clipped to the [0, size] interval.
+// Returns the zero-Token if start > end.
+func (fa *FileArena) Ref(start, end int) (token Token) {
+	if fa.arena == nil || start > end {
+		return token
+	}
+
+	fa.bufMu.Lock()
+	defer fa.bufMu.Unlock()
+	token.arena = fa.arena
+	if start < 0 {
+		token.start = 0
+	} else {
+		token.start = start
+	}
+	if n := int(fa.size); end > n {
+		token.end = n
+	} else {
+		token.end = end
+	}
+	return token
+}
+
+// Owns returns true only if token refers to the receiver arena.
+func (fa *FileArena) Owns(token Token) bool {
+	return token.arena == fa.arena
+}
+
+// RefN is a convenience for Ref(start, start + n)
+func (fa *FileArena) RefN(start, n int) Token {
+	return fa.Ref(start, start+n)
+}
+
+// RefAll a convenience for Ref(0, Size())
+func (fa *FileArena) RefAll() Token {
+	return fa.Ref(0, int(fa.size))
+}
+
+// ReadAt implements io.ReaderAt that first tries to copy out of arena internal
+// memory before falling back to a backing store read ( that will also cache
+// back to arena internal memory ).
+func (fa *FileArena) ReadAt(p []byte, off int64) (n int, err error) {
+	if fa.arena == nil || fa.back == nil {
+		return 0, errNoBacking
+	}
+	fa.bufMu.Lock()
+	defer fa.bufMu.Unlock()
+	if err := fa.backErr; err != nil {
+		return 0, err
+	}
+
+	for err == nil && len(p) > 0 {
+		var rel byteRange
+		if rel, err = fa.load(byteRange{int(off), int(off) + len(p)}); rel.len() > 0 {
+			m := copy(p, fa.arena.buf[rel.start:rel.end])
+			p = p[n:]
+			n += m
+			off += int64(m)
+		}
+	}
+	return n, err
 }
