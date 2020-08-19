@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 )
 
 var (
@@ -18,8 +19,9 @@ var (
 const DefaultBufferSize = 32 * 1024
 
 type arena struct {
-	buf    []byte // internal buffer
-	offset int    // start of buf within any back
+	bufMu  sync.Mutex // lock over buffer movement
+	buf    []byte     // internal buffer
+	offset int        // start of buf within any back
 
 	back    io.ReaderAt // backing storage
 	backErr error       // backing storage error
@@ -146,6 +148,9 @@ func (token Token) Bytes() ([]byte, error) {
 	if token.arena == nil {
 		return nil, errNoArena
 	}
+
+	token.arena.bufMu.Lock()
+	defer token.arena.bufMu.Unlock()
 	rel, err := token.arena.load(token.byteRange)
 	if err != nil {
 		return nil, err
@@ -256,12 +261,16 @@ type ByteArena struct {
 
 // Write stores p bytes into the internal buffer, returning len(p) and nil error.
 func (ba *ByteArena) Write(p []byte) (int, error) {
+	ba.bufMu.Lock()
+	defer ba.bufMu.Unlock()
 	ba.buf = append(ba.buf, p...)
 	return len(p), nil
 }
 
 // WriteString stores s bytes into the internal buffer, returning len(s) and nil error.
 func (ba *ByteArena) WriteString(s string) (int, error) {
+	ba.bufMu.Lock()
+	defer ba.bufMu.Unlock()
 	ba.buf = append(ba.buf, s...)
 	return len(s), nil
 }
@@ -269,6 +278,8 @@ func (ba *ByteArena) WriteString(s string) (int, error) {
 // Take returns a token referencing any bytes written into the arena since the
 // last taken token.
 func (ba *ByteArena) Take() (token Token) {
+	ba.bufMu.Lock()
+	defer ba.bufMu.Unlock()
 	token.arena = &ba.arena
 	token.start = ba.cur
 	token.end = len(ba.buf)
@@ -283,6 +294,8 @@ func (ba *ByteArena) Owns(token Token) bool {
 
 // Reset discards all bytes from the arena, resetting the internal buffer for reuse.
 func (ba *ByteArena) Reset() {
+	ba.bufMu.Lock()
+	defer ba.bufMu.Unlock()
 	ba.buf = ba.buf[:0]
 	ba.cur = 0
 }
@@ -296,6 +309,8 @@ func (ba *ByteArena) PruneTo(remain []Token) {
 			panic("ByteArena.PruneTo given a foreign token")
 		}
 	}
+	ba.bufMu.Lock()
+	defer ba.bufMu.Unlock()
 	offset := 0
 	for _, token := range remain {
 		if offset < token.end {
@@ -312,6 +327,8 @@ func (ba *ByteArena) TruncateTo(token Token) {
 	if token.arena != &ba.arena {
 		panic("ByteArena.TruncateTo given a foreign token")
 	}
+	ba.bufMu.Lock()
+	defer ba.bufMu.Unlock()
 	ba.buf = ba.buf[:token.start]
 	ba.cur = token.start
 }

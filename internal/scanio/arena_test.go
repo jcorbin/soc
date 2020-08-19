@@ -139,11 +139,12 @@ type scenario struct {
 	bufSize int
 }
 
-func (sc scenario) setup() (ta TestArena) {
+func (sc scenario) setup() *TestArena {
+	var ta TestArena
 	ta.SetBacking(sc.back)
 	ta.SetBackErr(sc.backErr)
 	ta.SetBufSize(sc.bufSize)
-	return ta
+	return &ta
 }
 
 var smolLorem = scenario{
