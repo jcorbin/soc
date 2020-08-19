@@ -107,19 +107,21 @@ func (token Token) Slice(i, j int) Token {
 	if token.arena == nil {
 		panic("cannot slice zero valued token")
 	}
+	old := token.byteRange
 	if j < 0 {
 		token.end = token.end + 1 + j
 	} else {
 		token.end = token.start + j
 	}
 	token.start += i
-	if n := len(token.arena.buf); token.end < token.start ||
+	if token.end < token.start ||
 		token.start < 0 ||
-		token.start > n ||
-		token.end > n {
+		token.start < old.start ||
+		token.start > old.end ||
+		token.end > old.end {
 		panic(fmt.Sprintf(
-			"token slice [%v:%v] out of range [%v:%v] vs %v",
-			i, j, token.start, token.end, n))
+			"token slice [%v:%v] out of range [%v:%v]",
+			i, j, old.start, old.end))
 	}
 	return token
 }
