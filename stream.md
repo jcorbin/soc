@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-14
+# 2020-08-21
 
 ## TODO
 
@@ -99,6 +99,26 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- percolated some of `scanio` centered work from the past week to master
+
+# 2020-08-19
+
+- [cmd/soc] started working today code toward using the co-developing
+  `FileArena` an `Token` updates   
+
+# 2020-08-17
+
+- [scanio] continued new `Arena` dev
+  - sketching `FileArena` and improving `Token` along the way
+
+# 2020-08-16
+
+- [scanio] started developing `Arena` to support `io.ReaderAt` backing
+  - impetus being to provide a better substrate for stream edits like the today
+    collection update, and the about to be written item addition
+
+# 2020-08-14
 
 - [cmd/soc]
   - sifted through and coalesced progress since 2020-08-11
