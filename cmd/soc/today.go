@@ -300,7 +300,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		return nil
 	}
 	// under a pending atomic update
-	return pres.update(st, func(w io.Writer) error {
+	return pres.update(st, func(w io.Writer) (rerr error) {
 		// write the user a message on the way out
 		defer func() {
 			if pres.sections[yesterdaySection].id != 0 {
@@ -317,7 +317,11 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		if all := (byteRange{0, pres.size}); !all.empty() {
 			remnants = append(remnants, all)
 		}
-		defer func() { pres.writeSectionsInto(w, remnants...) }()
+		defer func() {
+			if rerr == nil {
+				_, rerr = pres.writeSectionsInto(w, remnants...)
+			}
+		}()
 
 		// if we found yesterday, cut stream content in half before/after its
 		// head, and then copy the head
