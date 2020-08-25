@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-21
+# 2020-08-25
 
 ## TODO
 
@@ -99,6 +99,17 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scanio] tested and released `FileArena` and supporting `Token` work
+
+# 2020-08-24
+
+- [scanio]
+  - [dev] started a new `Editor` and `Cursor` deal based on the today
+    rollover/collection code
+  - [dev] small fixes to surrounding arena code revealed by the new editor test
+
+# 2020-08-21
 
 - percolated some of `scanio` centered work from the past week to master
 
