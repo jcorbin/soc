@@ -315,6 +315,8 @@ func (token Token) Format(f fmt.State, c rune) {
 			f.Write(b)
 		}
 
+	default:
+		fmt.Fprintf(f, "!(ERROR invalid format verb %%%s)", string(c))
 	}
 }
 
