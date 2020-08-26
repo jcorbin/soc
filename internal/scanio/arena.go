@@ -358,7 +358,7 @@ type FileArena struct {
 // Any extant Tokens become invalid; any attempt to load their contents will
 // result in an error.
 func (fa *FileArena) Reset(back io.ReaderAt, size int64) error {
-	if size == 0 {
+	if size == 0 && back != nil {
 		var ok bool
 		size, ok = readerAtSize(back)
 		if !ok {
