@@ -219,6 +219,23 @@ func (token Token) End() int { return token.end }
 // End returns the token byte length.
 func (token Token) Len() int { return token.len() }
 
+// Sub subtracts an other token from the receiver if they overlap.
+// If they do not share an arena (an extreme case of no overlap), the receiver
+// token is simply returned as head, with an empty tail.
+func (token Token) Sub(other Token) (head, tail Token) {
+	if other.arena != token.arena {
+		return token, Token{}
+	}
+	bh, bt := token.sub(other.byteRange)
+	if !bh.empty() {
+		head.arena, head.byteRange = token.arena, bh
+	}
+	if !bt.empty() {
+		tail.arena, tail.byteRange = token.arena, bt
+	}
+	return head, tail
+}
+
 // Slice returns a sub-token of the receiver, acting similarly to token[i:j].
 // Both i and j are token relative, but additionally j may be negative to count
 // back from the end of token.
@@ -256,6 +273,24 @@ func (br byteRange) add(n int) byteRange {
 	br.start += n
 	br.end += n
 	return br
+}
+
+func (br byteRange) sub(other byteRange) (head, tail byteRange) {
+	head = br
+	if other.start < br.end {
+		if other.end < br.start {
+			return
+		}
+		head.end = other.start
+		if head.end < head.start {
+			head = byteRange{}
+		}
+		if other.end < br.end {
+			tail = br
+			tail.start = other.end
+		}
+	}
+	return
 }
 
 // ByteArena implements an io.Writer into an internal in-memory arena, allowing
