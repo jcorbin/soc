@@ -223,7 +223,7 @@ func (pres *presentDay) load(st store) error {
 
 	// mark opens a new section, retaining its title bytes for later use.
 	mark := func(i presentSection) {
-		fmt.Fprint(&pres.arena, sc.outline)
+		fmt.Fprint(&pres.arena, &sc.outline)
 		pres.sections[i] = sc.openSection()
 		pres.titles[i] = pres.arena.Take()
 	}

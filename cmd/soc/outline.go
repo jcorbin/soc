@@ -96,7 +96,7 @@ func (sc *outlineScanner) Scan() bool {
 }
 
 // lastTime returns the most fine-grained time parsed so far.
-func (out outline) lastTime() (t isotime.GrainedTime) {
+func (out *outline) lastTime() (t isotime.GrainedTime) {
 	if i := len(out.time) - 1; i >= 0 {
 		t = out.time[i]
 	}
@@ -111,7 +111,7 @@ func (out outline) lastTime() (t isotime.GrainedTime) {
 //
 // NOTE if a heading (or item) title contains only a date/time component, it
 // does not count towards deepening the outline tree.
-func (out outline) heading(n int) (_ scanio.Token, isLast bool) {
+func (out *outline) heading(n int) (_ scanio.Token, isLast bool) {
 	m := 0
 	for i := 0; i < len(out.title); i++ {
 		if token := out.title[i]; !token.Empty() {
@@ -128,7 +128,7 @@ func (out outline) heading(n int) (_ scanio.Token, isLast bool) {
 // Up to the first 50 characters of each title are then printed.
 // When formatted with the "+" flag, also prints block and time data from each
 // outline item.
-func (out outline) Format(f fmt.State, _ rune) {
+func (out *outline) Format(f fmt.State, _ rune) {
 	first := true
 
 	if !f.Flag('+') {
