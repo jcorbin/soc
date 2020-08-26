@@ -331,6 +331,22 @@ func (ed *Editor) Remove(tokens ...Token) {
 		ed.content = tmp
 	}()
 
+	{
+		mayNeed := 0
+		for _, tok := range content {
+			for _, rm := range tokens {
+				if rm.arena == tok.arena {
+					if !rm.intersect(tok.byteRange).empty() {
+						mayNeed += 2
+					}
+				}
+			}
+		}
+		if cap(tmp) < mayNeed {
+			tmp = make([]Token, 0, mayNeed) // TODO would be nice to round up to a size class
+		}
+	}
+
 	for _, tok := range content {
 		for _, rm := range tokens {
 			head, tail := tok.Sub(rm)
