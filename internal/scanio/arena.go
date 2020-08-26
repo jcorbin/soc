@@ -44,9 +44,9 @@ func (ar *arena) setBack(back io.ReaderAt) {
 	ar.known = false
 }
 
-func (ar *arena) load(br byteRange) (rel byteRange, err error) {
+func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 	buf := ar.buf
-	rel = br.add(-ar.offset) // relativize
+	rel = req.add(-ar.offset) // relativize
 
 	// service from buffer if possible
 	if rel.start >= 0 && rel.end <= len(buf) {
@@ -60,8 +60,14 @@ func (ar *arena) load(br byteRange) (rel byteRange, err error) {
 			errBack = errNoBacking
 		}
 		if errBack != nil {
-			return byteRange{}, fmt.Errorf("cannot load range %v: %w", br, errBack)
+			return byteRange{}, fmt.Errorf("cannot load range %v: %w", req, errBack)
 		}
+	}
+
+	// determine reader size if not yet known
+	if !ar.known {
+		ar.size, _ = readerAtSize(ar.back)
+		ar.known = true
 	}
 
 	// truncate up to buffer capacity
@@ -76,47 +82,47 @@ func (ar *arena) load(br byteRange) (rel byteRange, err error) {
 	} else {
 		n = m
 	}
+	req.end = req.start + n
 	ar.buf = buf[:0] // invalid until read succeeds below
 
-	if offset := ar.offsetFor(ar.offset, len(buf), byteRange{br.start, br.start + n}); offset < 0 {
-		ar.offset = 0
-	} else {
-		ar.offset = offset
+	// center any load window slack around the requested range
+	load := byteRange{req.start, req.start + len(buf)}
+	if h := (len(buf) - n) / 2; h > 0 {
+		if h > req.start {
+			h = req.start
+		}
+		load = load.add(-h)
+	}
+
+	// but no sense targeting past EOF when we known better
+	if sz := int(ar.size); sz != 0 {
+		if rem := load.end - sz; rem > 0 {
+			load.end -= rem
+		}
 	}
 
 	// do the read
-	n, err = ar.back.ReadAt(buf, int64(ar.offset))
+	buf = buf[:load.len()]
+	n, err = ar.back.ReadAt(buf, int64(load.start))
 	buf = buf[:n]
-	ar.buf = buf
+	ar.buf, ar.offset = buf, load.start
 
 	// re-relativize and truncate
-	rel.start = br.start - ar.offset
-	if rel.end = rel.start + br.len(); rel.end > len(buf) {
+	if rel = req.add(-ar.offset); rel.start > len(buf) {
+		rel = byteRange{len(buf), len(buf)}
+		if err == nil {
+			err = fmt.Errorf("request range %v not in load range %v", req, load)
+		}
+	} else if rel.end > len(buf) {
 		rel.end = len(buf)
+		if err == nil {
+			err = io.EOF
+		}
 	} else if err == io.EOF {
 		err = nil // erase EOF error as long as we didn't truncate the request
 	}
 
 	return rel, err
-}
-
-func (ar *arena) offsetFor(prior, bufLen int, req byteRange) int {
-	if !ar.known {
-		ar.size, _ = readerAtSize(ar.back)
-		ar.known = true
-	}
-
-	// center any buffer slack around the requested range
-	offset := req.start/2 + req.end/2 - bufLen/2
-
-	// if sz := ar.size; sz != 0 {
-	// 	// but no sense targeting past EOF when we known better
-	// 	if rem := int(sz) - offset + req.len(); rem > 0 {
-	// 		offset -= rem
-	// 	}
-	// }
-
-	return offset
 }
 
 func readerAtSize(ra io.ReaderAt) (int64, bool) {
