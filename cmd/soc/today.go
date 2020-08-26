@@ -597,29 +597,49 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 			}
 		}()
 
+		// TODO refactor pres.update around Editor
+		// TODO run the byteRange => scanio.Token conversion up through the section struct type
+		// TODO rework scanning around a FileArena
+		// TODO factor out a batter scanner v2, aka scanio.Rescanner from what everges
+
+		// TODO run this up into presentDay / replace readState
+		var far scanio.FileArena
+		if err := far.Reset(pres.ReadAtCloser, pres.size); err != nil {
+			return err
+		}
+
 		// never loose a single byte of original stream content: setup to copy
 		// all bytes through; the code below then will subtract processed
 		// sections from this pending "copy the rest" sword
-		remnants := make(byteRanges, 0, 2*len(pres.sections))
-		if all := (byteRange{0, pres.size}); !all.empty() {
-			remnants = append(remnants, all)
+		var ed scanio.Editor
+		if all := far.RefAll(); !all.Empty() {
+			ed.Append(all)
 		}
 		defer func() {
 			if rerr == nil {
-				_, rerr = pres.writeSectionsInto(w, remnants...)
+				_, rerr = ed.WriteTo(w)
 			}
 		}()
 
 		// if we found yesterday, cut stream content in half before/after its
 		// head, and then copy the head
+		cur := ed.CursorAt(0)
 		if sec := pres.sections[yesterdaySection]; sec.id != 0 {
-			head, _ := remnants[0].sub(sec.headPoint())
-			pres.writeSectionsInto(w, head)
-			remnants.sub(head)
+			cur.To(int(sec.start))
 		}
 
 		// write the new today section header
-		fmt.Fprintf(w, "# %v\n\n", pres.date)
+		fmt.Fprintf(cur, "# %v\n\n", pres.date)
+
+		// track yesterday body remnant for potential header elision
+		yesterday := pres.sections[yesterdaySection]
+		remnant := byteRanges{yesterday.body}
+		remove := func(br byteRange) scanio.Token {
+			remnant.sub(br)
+			tok := far.Ref(int(br.start), int(br.end))
+			ed.Remove(tok)
+			return tok
+		}
 
 		// process each today sub-section, creating or carrying it forward
 		for i, name := range pres.sectionNames {
@@ -630,24 +650,23 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 
 			if sec.id == 0 {
 				// add any missing sub-sections
-				fmt.Fprintf(w, "## %v\n\n", name)
+				fmt.Fprintf(cur, "## %v\n\n", name)
 			} else if !pres.sectionRemains[i] {
 				// carry forward non-remnant sub-sections (e.g. TODO and WIP)
-				pres.writeSectionsInto(w, sec.byteRange)
-				remnants.sub(sec.byteRange)
+				cur.Insert(remove(sec.byteRange))
 			} else {
 				// leave remnant sections behind (e.g. Done)
 
-				// copy the yesterday sub-header into today
-				header := sec.header()
-				pres.writeSectionsInto(w, header)
-
-				// elide yesterday sub-header if it would start out the remnant;
+				// elide yesterday sub-header if it would start out the day;
 				// i.e. this erases the "## Done" header inside each day
-				if !remnants[0].intersect(header).empty() || remnants[1].start == header.start {
+				header := sec.header()
+				if remnant[0].start == header.start {
 					// TODO more configurable header elision/replacement?
-					remnants.sub(header)
+					remove(header)
 				}
+
+				// move or copy the yesterday sub-header into today
+				cur.Insert(far.Ref(int(header.start), int(header.end)))
 			}
 
 			// TODO support pulling down future items
