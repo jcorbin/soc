@@ -208,9 +208,7 @@ func (token Token) Format(f fmt.State, c rune) {
 }
 
 // Empty returns true if the token references no 0 bytes.
-func (token Token) Empty() bool {
-	return token.end == token.start
-}
+func (token Token) Empty() bool { return token.empty() }
 
 // Start returns the token start offset.
 func (token Token) Start() int { return token.start }
@@ -251,7 +249,8 @@ func (token Token) Slice(i, j int) Token {
 
 type byteRange struct{ start, end int }
 
-func (br byteRange) len() int { return br.end - br.start }
+func (br byteRange) empty() bool { return br.end == br.start }
+func (br byteRange) len() int    { return br.end - br.start }
 
 func (br byteRange) add(n int) byteRange {
 	br.start += n
