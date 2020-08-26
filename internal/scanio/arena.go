@@ -558,6 +558,16 @@ func (token Token) Sub(other Token) (head, tail Token) {
 	return head, tail
 }
 
+// Intersect returns any overlapping region of the receiver with an other token.
+func (token Token) Intersect(other Token) Token {
+	if other.arena == token.arena {
+		if token.byteRange = token.intersect(other.byteRange); !token.empty() {
+			return token
+		}
+	}
+	return Token{}
+}
+
 // Slice returns a sub-token of the receiver, acting similarly to token[i:j].
 // Both i and j are token relative, but additionally j may be negative to count
 // back from the end of token.
@@ -927,6 +937,19 @@ func (br byteRange) sub(other byteRange) (head, tail byteRange) {
 		}
 	}
 	return
+}
+
+func (br byteRange) intersect(other byteRange) byteRange {
+	if br.start < other.start {
+		br.start = other.start
+	}
+	if br.end > other.end {
+		br.end = other.end
+	}
+	if br.start >= br.end {
+		return byteRange{}
+	}
+	return br
 }
 
 // ByteArena implements an io.Writer into an internal in-memory arena, allowing
