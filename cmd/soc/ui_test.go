@@ -116,6 +116,26 @@ func Test_ui(t *testing.T) {
 			"# 2020-07-24 TODO",
 			"1. the other thing",
 		)),
+
+		// TODO use commands to build up to this, rather than faking
+		fakeStream("for match",
+			"# 2020-07-24\n",
+			"\n",
+			"## TODO\n",
+			"- the other thing\n",
+			"- and then...\n",
+			"## WIP\n",
+			"- that\n",
+			"## Done\n",
+			"# 2020-07-23\n",
+			"- this\n",
+			"# 2020-07-22\n",
+			"- different things\n",
+		),
+		cmd([]string{"todo", "other"}, expectLines(
+			"# 2020-07-24 TODO",
+			"1. the other thing",
+		)),
 	)
 }
 

@@ -11,6 +11,7 @@ import (
 	"github.com/jcorbin/soc/internal/isotime"
 	"github.com/jcorbin/soc/internal/scanio"
 	"github.com/jcorbin/soc/internal/socui"
+	"github.com/jcorbin/soc/scandown"
 )
 
 // ItemTypeConfig contains config for a stream item trigger word.
@@ -106,26 +107,70 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 	// collect remaining command args to match against items, adding any
 	// unmatched args as a new item
-	var args []string
+	var reqArgs []string
 	for req.ScanArg() {
-		args = append(args, req.Arg())
+		reqArgs = append(reqArgs, req.Arg())
 	}
 
-	sec := ctx.today.sections[tod.index]
+	// compile arg patterns
+	var patterns []*regexp.Regexp
+	if len(reqArgs) > 0 {
+		patterns = make([]*regexp.Regexp, len(reqArgs))
+		for i, arg := range reqArgs {
+			arg = strings.TrimSpace(arg)
+			pattern, err := regexp.Compile(`(?i:` + regexp.QuoteMeta(arg) + `)`)
+			if err != nil {
+				return fmt.Errorf("unable to compile regexp for arg[%v]:%q : %w", i+1, arg, err)
+			}
+			patterns[i] = pattern
+		}
+	}
 
+	// doMatch tries to match as many arg as possible against a section,
+	// returning the match result set and any remaining args, or an error.
+	doMatch := func(sec section) (match *outlineMatch, remArgs []string, err error) {
+		if len(reqArgs) == 0 {
+			return nil, nil, nil
+		}
+		match, err = matchOutline(&ctx.today, sec.body, patterns...)
+		if err == nil {
+			nextArg := match.maxNextArg()
+			remArgs = reqArgs[nextArg:]
+		}
+		return match, remArgs, err
+	}
+
+	// match as many args as possible against prior items
+	// TODO also match against sibling sections
+	sec := ctx.today.sections[tod.index]
+	match, args, err := doMatch(sec)
+	if err != nil {
+		return err
+	}
+
+	// add a new item based on the remaining args
 	if len(args) > 0 {
-		return fmt.Errorf("unimplemented %v %q", ctx.CommandHead(), args)
+		log.Printf("TODO add new %v item w/ %q", ctx.CommandHead(), args)
+		return errors.New("unimplemented")
 	}
 
 	res.Break()
 
 	fmt.Fprintf(res, "# %v\n", ctx.today.titles[tod.index])
 
-	// print matched item(s)
+	// print matched/added item(s)
 	var (
 		body   io.Reader = sec.body.readerWithin(&ctx.today)
 		filter outlineFilter
 	)
+
+	if !match.empty() {
+		// filter to any matched item or their children
+		filter = outlineFilters(filter, outlineFilterFunc(func(out *outline) bool {
+			_, n := match.matchIDs(out.id)
+			return n > 0
+		}))
+	}
 
 	// TODO option for raw markdown vs outline
 	// raw := io.MultiReader(sec.header().readerWithin(&ctx.today), body)
@@ -136,6 +181,242 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	// _, err := io.Copy(res, raw)
 
 	return printOutline(res, body, filter)
+}
+
+func matchOutline(ra io.ReaderAt, within byteRange, patterns ...*regexp.Regexp) (*outlineMatch, error) {
+	var (
+		sc    outlineScanner
+		cur   outlineMatch   // the current match being scanned
+		set   outlineMatch   // collected match results to return
+		xlate []scanio.Token // used to copy titles during result collection
+	)
+	cur.offset = within.start
+	for sc.Reset(within.readerWithin(ra)); sc.Scan(); {
+		for i, sec := range cur.within {
+			cur.within[i] = sc.updateSection(sec)
+		}
+
+		if !sc.titled {
+			continue
+		}
+
+		// truncate current match after any of its items exit
+		for i := 0; i < len(cur.matched); i++ {
+			if i >= len(sc.id) || sc.id[i] != cur.matched[i] {
+				xlate = cur.resultInto(&set, xlate)
+				cur.truncate(i)
+				if i < len(xlate) {
+					xlate = xlate[:i]
+				}
+				break
+			}
+		}
+
+		// only care about unmatched new items
+		if len(cur.matched) >= len(sc.id) {
+			continue
+		}
+
+		// try to match any remaining patterns
+		nextArg := 0
+		if i := len(cur.nextArg) - 1; i >= 0 {
+			nextArg = cur.nextArg[i]
+		}
+		if nextArg >= len(patterns) {
+			continue
+		}
+
+		// if we have a pattern, match it against outline head title content
+		pattern := patterns[nextArg]
+		if pattern == nil {
+			continue
+		}
+
+		// match title, or skip
+		outlineTitle := sc.title[len(sc.title)-1] // TODO scan just inline content, ignoring structure
+		b, err := outlineTitle.Bytes()
+		if err != nil {
+			return nil, err
+		}
+		loc := pattern.FindIndex(b)
+		if len(loc) == 0 {
+			continue
+		}
+		nextArg++
+
+		// add new matched outline node(s) with a newly opened section
+		cur.pushPath(&sc.outline, nextArg, sc.openSection())
+	}
+	xlate = cur.resultInto(&set, xlate) // collect any last match
+
+	return &set, sc.Err()
+}
+
+type outlineMatch struct {
+	offset int64
+
+	group   []int
+	matched []int
+	block   []scandown.Block
+	title   []scanio.Token
+	nextArg []int
+	within  []section
+
+	arena scanio.ByteArena
+}
+
+func (om *outlineMatch) empty() bool {
+	return om == nil || len(om.group) == 0
+}
+
+func (om *outlineMatch) matchIDs(ids []int) (matchGroup, matchLen int) {
+	if matchGroup = -1; om != nil && len(ids) > 0 {
+		var (
+			cur  = ids // unmatched remnant of ids
+			curG = -1  // current group number
+			ok   bool  // true if currently matching a group
+		)
+		for omI := 0; omI <= len(om.group); omI++ {
+			omG := -1
+			if omI < len(om.group) {
+				omG = om.group[omI]
+			}
+
+			// new group or end
+			if omG != curG {
+				if ok {
+					// track the best prefix match so far
+					if n := len(ids) - len(cur); matchLen < n {
+						matchGroup, matchLen = curG, n
+					}
+				}
+				// (re)set current match state
+				cur, curG, ok = ids, omG, omG >= 0
+			}
+
+			// skip to next group if match failed
+			if !ok {
+				continue
+			}
+
+			// advance cursor
+			next := cur[0]
+			cur = cur[1:]
+
+			// match next id
+			if ok = next == om.matched[omI]; !ok {
+				continue
+			}
+
+			// stop early on a full match
+			if len(cur) == 0 {
+				return curG, len(ids)
+			}
+		}
+	}
+	return matchGroup, matchLen
+}
+
+func (om *outlineMatch) push(group, matched int, block scandown.Block, title scanio.Token, nextArg int, within section) {
+	om.group = append(om.group, group)
+	om.matched = append(om.matched, matched)
+	om.block = append(om.block, block)
+	om.title = append(om.title, title)
+	om.nextArg = append(om.nextArg, nextArg)
+	om.within = append(om.within, within)
+}
+
+func (om *outlineMatch) pushPath(out *outline, nextArg int, sec section) {
+	group, priorArg, groupLen := 0, 0, 0
+	if i := len(om.group) - 1; i >= 0 {
+		group = om.group[i]
+		priorArg = om.nextArg[i]
+		for groupLen = 0; i >= 0; i-- {
+			if om.group[i] != group {
+				break
+			}
+			groupLen++
+		}
+	}
+	for i := groupLen; i < len(out.id); i++ {
+		fmt.Fprint(&om.arena, out.title[i])
+		id := out.id[i]
+		block := out.block[i]
+		title := om.arena.Take()
+		if id == sec.id {
+			om.push(group, id, block, title, nextArg, sec)
+			break
+		} else {
+			om.push(group, id, block, title, priorArg, section{})
+		}
+	}
+}
+
+func (om *outlineMatch) truncate(i int) {
+	om.group = om.group[:i]
+	om.matched = om.matched[:i]
+	om.block = om.block[:i]
+	om.title = om.title[:i]
+	om.nextArg = om.nextArg[:i]
+	om.within = om.within[:i]
+	om.arena.PruneTo(om.title)
+}
+
+func (om *outlineMatch) maxNextArg() int {
+	r := 0
+	if om != nil {
+		for _, na := range om.nextArg {
+			if r < na {
+				r = na
+			}
+		}
+	}
+	return r
+}
+
+func (om *outlineMatch) resultInto(dest *outlineMatch, xlate []scanio.Token) []scanio.Token {
+	i := len(om.matched) - 1
+	if i < 0 || om.within[i].id == 0 {
+		return xlate
+	}
+	priorArg := dest.maxNextArg()
+	if nextArg := om.nextArg[i]; nextArg < priorArg {
+		return xlate
+	} else if nextArg > priorArg {
+		dest.truncate(0)
+		xlate = xlate[:0]
+	}
+	return om.addInto(dest, xlate)
+}
+
+func (om *outlineMatch) addInto(dest *outlineMatch, xlate []scanio.Token) []scanio.Token {
+	if len(om.group) == 0 {
+		return xlate
+	}
+
+	for _, title := range om.title[len(xlate):] {
+		b, _ := title.Bytes()
+		dest.arena.Write(b)
+		xlate = append(xlate, dest.arena.Take())
+	}
+	offset := om.offset - dest.offset
+
+	var destGroup int
+	if i := len(dest.group) - 1; i >= 0 {
+		destGroup = dest.group[i]
+		destGroup++
+	}
+
+	group := om.group[0]
+	for i, g := range om.group {
+		if g != group {
+			destGroup++
+			group = g
+		}
+		dest.push(destGroup, om.matched[i], om.block[i], xlate[i], om.nextArg[i], om.within[i].add(offset))
+	}
+
+	return xlate
 }
 
 type presentConfig struct {
