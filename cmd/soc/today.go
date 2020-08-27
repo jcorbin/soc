@@ -112,25 +112,30 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	}
 
 	sec := ctx.today.sections[tod.index]
-	title := ctx.today.titles[tod.index]
-	var src io.Reader = sec.body.readerWithin(&ctx.today)
 
-	// list if no args; TODO unify with matched all branch below?
-	if len(args) == 0 {
-		res.Break()
-		// TODO option for raw markdown vs outline
-		// src = io.MultiReader(sec.header().readerWithin(&ctx.today), src)
-		// if tod.index != int(todaySection) {
-		// 	todSec := ctx.today.sections[todaySection]
-		// 	src = io.MultiReader(todSec.header().readerWithin(&ctx.today), src)
-		// }
-		// _, err := io.Copy(res, src)
-
-		fmt.Fprintf(res, "# %s\n", title)
-		return printOutline(res, src)
+	if len(args) > 0 {
+		return fmt.Errorf("unimplemented %v %q", ctx.CommandHead(), args)
 	}
 
-	return fmt.Errorf("unimplemented %v %q", ctx.CommandHead(), args)
+	res.Break()
+
+	fmt.Fprintf(res, "# %v\n", ctx.today.titles[tod.index])
+
+	// print matched item(s)
+	var (
+		body   io.Reader = sec.body.readerWithin(&ctx.today)
+		filter outlineFilter
+	)
+
+	// TODO option for raw markdown vs outline
+	// raw := io.MultiReader(sec.header().readerWithin(&ctx.today), body)
+	// if tod.index != int(todaySection) {
+	// 	todSec := ctx.today.sections[todaySection]
+	// 	raw = io.MultiReader(todSec.header().readerWithin(&ctx.today), raw)
+	// }
+	// _, err := io.Copy(res, raw)
+
+	return printOutline(res, body, filter)
 }
 
 type presentConfig struct {
