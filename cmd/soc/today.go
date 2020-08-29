@@ -179,6 +179,7 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	if err != nil {
 		return err
 	}
+	// TODO look for better matches in sibling sections
 
 	// add a new item based on the remaining args
 	if len(args) > 0 {
