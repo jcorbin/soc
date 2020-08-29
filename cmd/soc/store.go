@@ -22,44 +22,49 @@ type store interface {
 	update() (cleanupWriteCloser, error)
 }
 
-type ReadAtCloser interface {
-	io.ReaderAt
-	io.Closer
-}
-
 // sizedReaderAt converts the given read stream into a reader at, and returns it size.
 // To achieve this, it may sponge() the stream into an anonymous temp file.
 //
-// The caller is responsible for closing any returned ReadAtCloser.
-// When no error is returned, the caller is no longer responsible for closing rc:
-// it has either been closed already, or cast into the returned ReadAtCloser.
-func sizedReaderAt(rc io.ReadCloser) (ReadAtCloser, int64, error) {
-	rac, ok := rc.(ReadAtCloser)
-	var size int64
-	if ok {
-		size, ok = readerSize(rc)
+// It closes r if it implements io.Closer and was sponged so that the caller
+// need only concern itself with the returned io.ReaderAt after return.
+func sizedReaderAt(r io.Reader) (ra io.ReaderAt, size int64, rerr error) {
+	if ra, ok := r.(io.ReaderAt); ok {
+		if size, ok := readerSize(r); ok {
+			return ra, size, nil
+		}
 	}
-	if !ok {
-		// sponge into an orphaned tmp file if necessary
-		f, err := sponge(rc)
-		if err != nil {
-			return nil, 0, err
+
+	// sponge into an orphaned tmp file if necessary
+	f, err := sponge(r)
+	defer func() {
+		if rerr != nil {
+			f.Close()
 		}
-		rac = f
-		if st, err := f.Stat(); err != nil {
-			return nil, 0, err
-		} else {
-			size = st.Size()
-		}
-		if cerr := rc.Close(); err == nil {
+	}()
+	if cl, ok := r.(io.Closer); ok {
+		if cerr := cl.Close(); err == nil {
 			err = cerr
 		}
 	}
-	return rac, size, nil
+	if err != nil {
+		return nil, 0, err
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return f, info.Size(), nil
 }
 
 func readerSize(r io.Reader) (int64, bool) {
-	if able, ok := r.(interface{ Stat() (os.FileInfo, error) }); ok {
+	type sizer interface{ Size() int64 }
+	type stater interface{ Stat() (os.FileInfo, error) }
+	if able, ok := r.(sizer); ok {
+		return able.Size(), true
+	}
+	if able, ok := r.(stater); ok {
 		if st, err := able.Stat(); err == nil {
 			return st.Size(), true
 		}
