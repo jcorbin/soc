@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-27
+# 2020-08-29
 
 ## TODO
 
@@ -101,7 +101,14 @@ The first half of `scandown` is now prototyped:
 ## Done
 
 - [cmd/soc]
-  - [dev] percolated WIP today matching work into a coupe likely commits
+  - [dev] percolated pivot around `scanio.Editor` and `.FileArena` for up next
+  - TODO: once test are passing at this new `ed` checkpoint, should be able to
+    move back on to item addition work
+
+# 2020-08-27
+
+- [cmd/soc]
+  - [dev] percolated WIP today matching work into a couple likely commits
   - TODO: should be able to write a test and release the matching part soon,
     after a bit of percolation from the item add WIP
 
