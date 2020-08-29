@@ -152,8 +152,19 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 	// add a new item based on the remaining args
 	if len(args) > 0 {
-		log.Printf("TODO add new %v item w/ %q", ctx.CommandHead(), args)
-		return errors.New("unimplemented")
+		// TODO afford easier disambiguation
+		err = ctx.today.edit(ctx.store, func(ed *scanio.Editor) error {
+			// TODO add new item under group
+			// TODO using similar "remnant editor" approach to presentDay.collect
+			log.Printf("WIP add new %v item w/ %q", ctx.CommandHead(), args)
+			return errors.New("unimplemented")
+		})
+		if err == nil {
+			match, args, err = doMatch(sec)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	res.Break()
