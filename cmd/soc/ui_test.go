@@ -488,6 +488,7 @@ func (n named) run(t *uiTestContext) {
 }
 
 type uiTestSteps []uiTestStep
+type uiTestAllSteps uiTestSteps
 
 func (steps uiTestSteps) run(t *uiTestContext) {
 	for _, step := range steps {
@@ -495,6 +496,15 @@ func (steps uiTestSteps) run(t *uiTestContext) {
 			break
 		}
 		step.run(t)
+	}
+}
+
+func (steps uiTestAllSteps) run(t *uiTestContext) {
+	for _, step := range steps {
+		step.run(t)
+	}
+	if t.Failed() {
+		t.FailNow()
 	}
 }
 
@@ -555,6 +565,11 @@ func (tc *uiTestCompiler) pop() bool {
 	head := tc.stack[i]
 	tc.stack = tc.stack[:i]
 	i--
+	if steps, ok := head.uiTestStep.(uiTestSteps); ok {
+		if _, isCmdSeq := steps[0].(uiTestArgs); isCmdSeq {
+			head.uiTestStep = uiTestAllSteps(steps)
+		}
+	}
 	tc.add(head)
 	return true
 }
