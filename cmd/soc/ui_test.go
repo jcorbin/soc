@@ -459,18 +459,14 @@ type uiTestArgs struct {
 
 func (ta uiTestArgs) run(t *uiTestContext) {
 	var out bytes.Buffer
-	defer func() {
-		if t.Failed() {
-			for i, line := range strings.Split(out.String(), "\n") {
-				t.Logf("out #%v: %s", i+1, line)
-			}
-		}
-	}()
 	err := socui.ArgsRequest(t.now, ta.args).Serve(&out, t)
 	if ta.err != nil {
 		assert.EqualError(t, err, ta.err.Error())
-	} else {
-		require.NoError(t, err, "unexpected error")
+	} else if !assert.NoError(t, err, "unexpected error") {
+		for i, line := range strings.Split(out.String(), "\n") {
+			t.Logf("out #%v: %s", i+1, line)
+		}
+		t.FailNow()
 	}
 	if ta.output != nil {
 		ta.output.expect(t, out.String())
