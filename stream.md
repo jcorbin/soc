@@ -100,7 +100,20 @@ The first half of `scandown` is now prototyped:
 
 ## Done
 
-- [cmd/soc] tested and released today item matching    
+- released the initial / minimal pivot over `scanio.Editor`
+  - TODO further rectify [cmd/soc] storage code over `scanio`
+- [cmd/soc]
+  - tested and released today item matching
+  - got usage of `scanio.Editor` passing prior tests
+  - TODO realized the need for sorted remnant `byteRanges` subtraction code to
+    remain in some form
+- [scanio]
+  - fixed a few `Editor` bugs while testing the pivot to editor for today collection
+  - realized need for `CopyTokens` to elide empty and coalesce adjacent ranges:
+    - the existing today collection code would commonly move adjacent
+      sub-sections by inserting them through a cursor
+    - TODO cursor insert should coalesce content earlier ideally, but having
+      this final step seems prudent anyhow
 
 # 2020-08-29
 
