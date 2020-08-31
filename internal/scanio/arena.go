@@ -53,11 +53,15 @@ func compactRanges(ranges []byteRange) []byteRange {
 		} else if br.start == cur.end {
 			cur.end = br.end
 		} else {
-			ranges = append(ranges, cur)
+			if !cur.empty() {
+				ranges = append(ranges, cur)
+			}
 			cur = br
 		}
 	}
-	ranges = append(ranges, cur)
+	if !cur.empty() {
+		ranges = append(ranges, cur)
+	}
 	return ranges
 }
 
