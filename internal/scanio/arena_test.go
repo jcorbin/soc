@@ -186,3 +186,149 @@ mauris. Donec a ornare ipsum. Phasellus placerat tincidunt augue quis tempus.
 Class aptent taciti sociosqu ad litora torquent per conubia nostra, per
 inceptos himenaeos. Cras scelerisque id felis et posuere.
 `
+
+func TestArea_Add(t *testing.T) {
+	var far FileArena
+	far.Reset(strings.NewReader(loremIpsum), 0)
+	var ar Area
+	for _, tc := range []struct {
+		name       string
+		add        [2]int
+		expectRepr string
+		expectOut  string
+	}{
+		{
+			name:       "empty on zero",
+			add:        [2]int{0, 0},
+			expectRepr: "[]",
+		},
+		{
+			name:       "ipsum",
+			add:        [2]int{6, 11},
+			expectRepr: "[@6:11]",
+			expectOut:  "ipsum",
+		},
+		{
+			name:       "sit",
+			add:        [2]int{17, 21},
+			expectRepr: "[@6:11 @17:21]",
+			expectOut:  "ipsum sit",
+		},
+		{
+			name:       "dolor",
+			add:        [2]int{11, 17},
+			expectRepr: "[@6:21]",
+			expectOut:  "ipsum dolor sit",
+		},
+		{
+			name:       "sit amet",
+			add:        [2]int{18, 26},
+			expectRepr: "[@6:26]",
+			expectOut:  "ipsum dolor sit amet",
+		},
+		{
+			name:       "Lorem ipsum",
+			add:        [2]int{0, 11},
+			expectRepr: "[@0:26]",
+			expectOut:  "Lorem ipsum dolor sit amet",
+		},
+		{
+			name:       "elit",
+			add:        [2]int{50, 55},
+			expectRepr: "[@0:26 @50:55]",
+			expectOut:  "Lorem ipsum dolor sit amet elit",
+		},
+		{
+			name:       "adip",
+			add:        [2]int{39, 44},
+			expectRepr: "[@0:26 @39:44 @50:55]",
+			expectOut:  "Lorem ipsum dolor sit amet adip elit",
+		},
+		{
+			name:       "... elit.",
+			add:        [2]int{22, 56},
+			expectRepr: "[@0:56]",
+			expectOut:  "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := far.Ref(tc.add[0], tc.add[1])
+			ar.Add(tok)
+			if tc.expectRepr != "" {
+				repr := fmt.Sprintf("%+v", ar)
+				if i := strings.IndexByte(repr, '['); i >= 0 {
+					repr = repr[i:]
+				}
+				assert.Equal(t, tc.expectRepr, repr, "expected area representation")
+			}
+			if tc.expectOut != "" {
+				assert.Equal(t, tc.expectOut, fmt.Sprintf("%v", ar), "expected area contents")
+			}
+		})
+	}
+}
+
+func TestArea_Sub(t *testing.T) {
+	var far FileArena
+	far.Reset(strings.NewReader(loremIpsum), 0)
+	var ar Area
+	ar.Add(far.Ref(0, 26))
+	for _, tc := range []struct {
+		name       string
+		add        [2]int
+		expectRepr string
+		expectOut  string
+	}{
+		{
+			name:       "empty",
+			add:        [2]int{0, 0},
+			expectRepr: "[@0:26]",
+			expectOut:  "Lorem ipsum dolor sit amet",
+		},
+		{
+			name:       "ip",
+			add:        [2]int{6, 8},
+			expectRepr: "[@0:6 @8:26]",
+			expectOut:  "Lorem sum dolor sit amet",
+		},
+		{
+			name:       "do",
+			add:        [2]int{12, 14},
+			expectRepr: "[@0:6 @8:12 @14:26]",
+			expectOut:  "Lorem sum lor sit amet",
+		},
+		{
+			name:       "ipsum dolor sit_",
+			add:        [2]int{6, 22},
+			expectRepr: "[@0:6 @22:26]",
+			expectOut:  "Lorem amet",
+		},
+		{
+			name:       "Lorem_",
+			add:        [2]int{0, 6},
+			expectRepr: "[@22:26]",
+			expectOut:  "amet",
+		},
+		{
+			name:       "amet",
+			add:        [2]int{22, 26},
+			expectRepr: "[]",
+			expectOut:  "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tok := far.Ref(tc.add[0], tc.add[1])
+			ar.Sub(tok)
+			if tc.expectRepr != "" {
+				repr := fmt.Sprintf("%+v", ar)
+				if i := strings.IndexByte(repr, '['); i >= 0 {
+					repr = repr[i:]
+				}
+				assert.Equal(t, tc.expectRepr, repr, "expected area representation")
+			}
+			if tc.expectOut != "" {
+				assert.Equal(t, tc.expectOut, fmt.Sprintf("%v", ar), "expected area contents")
+			}
+		})
+	}
+}

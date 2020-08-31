@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"sync"
 )
 
@@ -386,10 +388,290 @@ func (token Token) Slice(i, j int) Token {
 	return token
 }
 
+// MakeArea creates a new Area over the geven tokens, which must come from the
+// same arena.
+func MakeArea(tokens ...Token) (ar Area) {
+	for _, token := range tokens {
+		ar.Add(token)
+	}
+	return ar
+}
+
+// Area is a set of byte ranges within an arena.
+// Token ranges may be added and removed efficiently.
+// The area may be written and formatted similarly to a Token.
+type Area struct {
+	arena  *arena
+	ranges []byteRange
+}
+
+// WriteTo writes all area byte ranges into the given writer, returning the
+// number of bytes written and any write error.
+func (ar *Area) WriteTo(dest io.Writer) (n int64, err error) {
+	if ar.arena == nil || len(ar.ranges) == 0 {
+		return
+	}
+	return ar.arena.writeInto(dest, ar.ranges...)
+}
+
+// AppendTokens appends Token references for each of the area's byte ranges
+// into the given slice, returning the new slice value.
+func (ar *Area) AppendTokens(into []Token) []Token {
+	i := len(into)
+	into = append(into, make([]Token, len(ar.ranges))...)
+	for j, br := range ar.ranges {
+		into[i+j] = Token{br, ar.arena}
+	}
+	return into
+}
+
+// Format write all byte ranges similarly to how their individual Token
+// references would be formatted.
+// Provides offset information when formatted with %+v.
+func (ar Area) Format(f fmt.State, c rune) {
+	var quote bool
+	switch c {
+	case 'v':
+		if f.Flag('+') {
+			fmt.Fprintf(f, "%T(%p)[", ar.arena, ar.arena)
+			for i, br := range ar.ranges {
+				if i > 0 {
+					f.Write([]byte(" "))
+				}
+				fmt.Fprintf(f, "@%v:%v", br.start, br.end)
+			}
+			f.Write([]byte("]"))
+			return
+		}
+	case 's':
+
+	case 'q':
+		quote = true
+
+	default:
+		fmt.Fprintf(f, "!(ERROR invalid format verb %%%s)", string(c))
+	}
+
+	prec, havePrec := f.Precision()
+	if quote {
+		f.Write([]byte{'"'})
+	}
+
+	tok := Token{arena: ar.arena}
+	for _, br := range ar.ranges {
+		tok.byteRange = br
+		b, err := tok.Bytes()
+		if err != nil {
+			fmt.Fprintf(f, "!(ERROR %v)", err)
+			return
+		}
+		if havePrec && len(b) > prec {
+			b = b[:prec]
+		}
+
+		var m int
+		if quote {
+			q := strconv.Quote(string(b)) // TODO wasteful?
+			m, err = io.WriteString(f, q[1:len(q)-1])
+		} else {
+			m, err = f.Write(b)
+		}
+
+		if havePrec {
+			if prec -= m; prec <= 0 {
+				break
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+
+	if quote {
+		f.Write([]byte{'"'})
+	}
+}
+
+// Add adds a token byte range to the area, potentially merging any prior
+// spanned ranges.
+// If the Area has not yet had an arena set, it is set to the token's arena.
+// Panics if the given token is from a different arena.
+func (ar *Area) Add(tok Token) {
+	if tok.Empty() {
+		return
+	}
+	if ar.arena == nil {
+		ar.arena = tok.arena
+	} else if ar.arena != tok.arena {
+		panic("Area.Add given a foreign token")
+	}
+
+	// TODO worthwhile to eliminate this?
+	defer func() {
+		ar.ranges = compactRanges(ar.ranges)
+	}()
+	i := ar.find(tok.start)
+
+	// coalesce spanned ranges
+	if j := ar.find(tok.end); j > i {
+		n := i + 1
+		if j == len(ar.ranges) {
+			j--
+		}
+		ar.ranges[i].end = ar.ranges[j].end
+		if k := j + 1; k < len(ar.ranges) {
+			n += copy(ar.ranges[n:], ar.ranges[k:])
+		}
+		ar.ranges = ar.ranges[:n]
+	}
+
+	// may extend a prior range
+	if i < len(ar.ranges) {
+		if prior, overlap := ar.ranges[i].merge(tok.byteRange); overlap {
+			ar.ranges[i] = prior
+			return
+		}
+	}
+
+	// otherwise we have a new range to insert
+	if i >= len(ar.ranges) {
+		ar.ranges = append(ar.ranges, tok.byteRange)
+	} else {
+		ar.ranges = append(ar.ranges, byteRange{})
+		copy(ar.ranges[i+1:], ar.ranges[i:])
+		ar.ranges[i] = tok.byteRange
+	}
+}
+
+// Sub removes a token byte range from the area, potentially fragmenting prior
+// touching ranges, and eliding any fully spanned ranges.
+// Panics if the given token is from a different arena.
+// If the removal results in an empty area, the arena pointer is unset,
+// allowing a token from any arena to be added.
+func (ar *Area) Sub(tok Token) {
+	if tok.Empty() {
+		return
+	}
+	if ar.arena == nil {
+		return
+	} else if ar.arena != tok.arena {
+		panic("Area.Sub given a foreign token")
+	}
+
+	defer func() {
+		if len(ar.ranges) == 0 {
+			ar.arena = nil
+		}
+	}()
+
+	// TODO worthwhile to eliminate this?
+	defer func() {
+		ar.ranges = compactRanges(ar.ranges)
+	}()
+
+	br := tok.byteRange
+
+	i := ar.find(br.start)
+	if i < len(ar.ranges) {
+		var tail byteRange
+		ar.ranges[i], tail = ar.ranges[i].sub(br)
+		if !tail.empty() {
+			ar.ranges = append(ar.ranges, byteRange{})
+			copy(ar.ranges[i+2:], ar.ranges[i+1:])
+			ar.ranges[i+1] = tail
+		}
+		i++
+	}
+
+	j := ar.find(tok.end)
+	if j < len(ar.ranges) {
+		var head byteRange
+		head, ar.ranges[j] = ar.ranges[j].sub(br)
+		if !head.empty() {
+			ar.ranges = append(ar.ranges, byteRange{})
+			copy(ar.ranges[j+1:], ar.ranges[j:])
+			ar.ranges[j] = head
+		}
+		j--
+	}
+
+	if j > i {
+		n := i
+		n += copy(ar.ranges[i:], ar.ranges[j:])
+		ar.ranges = ar.ranges[:n]
+	}
+}
+
+// Empty return true if the area contains no non-empty ranges.
+func (ar *Area) Empty() bool {
+	for _, br := range ar.ranges {
+		if !br.empty() {
+			return false
+		}
+	}
+	return true
+}
+
+// Clear removes all ranges from the area, and clears any arena pointer.
+func (ar *Area) Clear() {
+	ar.ranges = ar.ranges[:0]
+	ar.arena = nil
+}
+
+func (ar *Area) find(offset int) int {
+	i := sort.Search(len(ar.ranges), func(i int) bool {
+		return ar.ranges[i].start > offset
+	})
+	if i > 0 && ar.ranges[i-1].end > offset {
+		i--
+	}
+	return i
+}
+
+// Find searches the area's ranges for the given offset, returning the number
+// of preceding bytes within the area and whether the given offset is
+// contained.
+//
+// NOTE may still return a non-zero before if with false found if the area has
+// granges that precede, but none that contain offset.
+func (ar Area) Find(offset int) (before int, found bool) {
+	i := ar.find(offset)
+	found = i < len(ar.ranges)
+	for j := 0; j <= i; j++ {
+		br := ar.ranges[j]
+		end := br.end
+		if end > offset {
+			end = offset
+		}
+		before += end - br.start
+	}
+	return before, found
+}
+
 type byteRange struct{ start, end int }
 
 func (br byteRange) empty() bool { return br.end == br.start }
 func (br byteRange) len() int    { return br.end - br.start }
+
+func (br byteRange) contains(offset int) bool {
+	return offset >= br.start && offset < br.end
+}
+
+func (br byteRange) merge(other byteRange) (_ byteRange, overlap bool) {
+	if br.contains(other.start) {
+		if br.end < other.end {
+			br.end = other.end
+		}
+		overlap = true
+	}
+	if br.contains(other.end) {
+		if br.start > other.start {
+			br.start = other.start
+		}
+		overlap = true
+	}
+	return br, overlap
+}
 
 func (br byteRange) add(n int) byteRange {
 	br.start += n
