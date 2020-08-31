@@ -33,20 +33,7 @@ func CopyTokens(dest io.Writer, tokens ...Token) (written int64, err error) {
 
 		// elide empty and coalesce adjacent ranges
 		if len(ranges) > 1 {
-			tmp := ranges
-			ranges = ranges[:0]
-			cur := tmp[0]
-			for _, br := range tmp[1:] {
-				if br.empty() {
-					continue
-				} else if br.start == cur.end {
-					cur.end = br.end
-				} else {
-					ranges = append(ranges, cur)
-					cur = br
-				}
-			}
-			ranges = append(ranges, cur)
+			ranges = compactRanges(ranges)
 		}
 
 		var n int64
@@ -54,6 +41,24 @@ func CopyTokens(dest io.Writer, tokens ...Token) (written int64, err error) {
 		written += n
 	}
 	return written, err
+}
+
+func compactRanges(ranges []byteRange) []byteRange {
+	tmp := ranges
+	ranges = ranges[:0]
+	cur := tmp[0]
+	for _, br := range tmp[1:] {
+		if br.empty() {
+			continue
+		} else if br.start == cur.end {
+			cur.end = br.end
+		} else {
+			ranges = append(ranges, cur)
+			cur = br
+		}
+	}
+	ranges = append(ranges, cur)
+	return ranges
 }
 
 var (
