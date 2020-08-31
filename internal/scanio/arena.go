@@ -329,8 +329,8 @@ func (token Token) Format(f fmt.State, c rune) {
 	}
 }
 
-// Empty returns true if the token references no 0 bytes.
-func (token Token) Empty() bool { return token.empty() }
+// Empty returns true if the token references any bytes in some arena.
+func (token Token) Empty() bool { return token.arena == nil || token.empty() }
 
 // Start returns the token start offset.
 func (token Token) Start() int { return token.start }
