@@ -404,58 +404,6 @@ func (br byteRange) add(offset int64) byteRange {
 	return br
 }
 
-// TODO eventually unify readState/byteRange into a file-backed scanio arena
-type readState struct {
-	ReadAtCloser
-	size    int64
-	copyBuf []byte
-	err     error
-}
-
-func (rs *readState) ReadAt(p []byte, off int64) (n int, err error) {
-	if err = rs.err; err != nil {
-		return 0, err
-	}
-	if rs.ReadAtCloser == nil {
-		return 0, nil
-	}
-	n, err = rs.ReadAtCloser.ReadAt(p, off)
-	if err != nil && err != io.EOF {
-		rs.err = err
-	}
-	return n, err
-}
-
-func (rs *readState) Close() error {
-	if rs.ReadAtCloser == nil {
-		return nil
-	}
-	err := rs.ReadAtCloser.Close()
-	if err == nil {
-		err = rs.err
-		rs.ReadAtCloser = nil
-		rs.size = 0
-		rs.err = nil
-	}
-	return err
-}
-
-func (rs *readState) Size() int64 {
-	return rs.size
-}
-
-func (rs *readState) open(rc io.ReadCloser, err error) error {
-	if errors.Is(err, errStoreNotExists) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	rs.ReadAtCloser, rs.size, err = sizedReaderAt(rc)
-	rs.err = nil
-	return err
-}
-
 type writeState struct {
 	w   io.Writer
 	err error

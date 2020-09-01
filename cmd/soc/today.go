@@ -427,7 +427,7 @@ type presentConfig struct {
 
 type presentDay struct {
 	presentConfig
-	readState
+	scanio.FileArena
 	date     isotime.GrainedTime
 	sections []section
 	titles   []scanio.Token
@@ -499,13 +499,26 @@ func (pres *presentDay) load(st store) error {
 	// open a new storage reader, and convert it for random access ala
 	// io.ReaderAt, which may end up sponging the source into a tempfile if it
 	// doesn't support random access
-	if err := pres.open(st.open()); err != nil {
+	var (
+		ra   io.ReaderAt
+		size int64
+	)
+	rc, err := st.open()
+	if err == nil {
+		ra, size, err = sizedReaderAt(rc)
+	} else if errors.Is(err, errStoreNotExists) {
+		err = nil
+	}
+	if err == nil {
+		err = pres.FileArena.Reset(ra, size)
+	}
+	if err != nil {
 		return err
 	}
 
 	// setup the outine scanner and utilities
 	var sc outlineScanner
-	sc.Reset(byteRange{0, pres.size}.readerWithin(pres))
+	sc.Reset(tokenReader(pres.RefAll(), pres))
 
 	// mark opens a new section, retaining its title bytes for later use.
 	mark := func(i presentSection) {
@@ -579,6 +592,12 @@ func (pres *presentDay) load(st store) error {
 	return nil
 }
 
+func tokenReader(tok scanio.Token, ra io.ReaderAt) *io.SectionReader {
+	start, end := tok.Start(), tok.End()
+	n := end - start
+	return io.NewSectionReader(ra, int64(start), int64(n))
+}
+
 // collect performs a stream update if no today section has been found, writing
 // a new today section, collecting any non-remnant yesterday content (e.g.
 // TODO/WIP items), and ensuring that all today sub-sections are present.
@@ -602,17 +621,11 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		// TODO rework scanning around a FileArena
 		// TODO factor out a batter scanner v2, aka scanio.Rescanner from what everges
 
-		// TODO run this up into presentDay / replace readState
-		var far scanio.FileArena
-		if err := far.Reset(pres.ReadAtCloser, pres.size); err != nil {
-			return err
-		}
-
 		// never loose a single byte of original stream content: setup to copy
 		// all bytes through; the code below then will subtract processed
 		// sections from this pending "copy the rest" sword
 		var ed scanio.Editor
-		if all := far.RefAll(); !all.Empty() {
+		if all := pres.RefAll(); !all.Empty() {
 			ed.Append(all)
 		}
 		defer func() {
@@ -633,7 +646,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 
 		// track yesterday body remnant for potential header elision
 		yesterday := pres.sections[yesterdaySection]
-		remnant := scanio.MakeArea(far.Ref(int(yesterday.body.start), int(yesterday.body.end)))
+		remnant := scanio.MakeArea(pres.Ref(int(yesterday.body.start), int(yesterday.body.end)))
 		remove := func(tok scanio.Token) scanio.Token {
 			remnant.Sub(tok)
 			ed.Remove(tok)
@@ -652,14 +665,14 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 				fmt.Fprintf(cur, "## %v\n\n", name)
 			} else if !pres.sectionRemains[i] {
 				// carry forward non-remnant sub-sections (e.g. TODO and WIP)
-				cur.Insert(remove(far.Ref(int(sec.start), int(sec.end))))
+				cur.Insert(remove(pres.Ref(int(sec.start), int(sec.end))))
 			} else {
 				// leave remnant sections behind (e.g. Done)
 
 				// elide yesterday sub-header if it would start out the day;
 				// i.e. this erases the "## Done" header inside each day
 				header := sec.header()
-				headerTok := far.Ref(int(header.start), int(header.end))
+				headerTok := pres.Ref(int(header.start), int(header.end))
 
 				if offset, headerRemains := remnant.Find(int(header.start)); headerRemains && offset == 0 {
 					// TODO more configurable header elision/replacement?
@@ -683,7 +696,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 // content, and presentDay.load() will be called to reload the newly written
 // state.
 func (pres *presentDay) update(st store, with func(w io.Writer) error) (rerr error) {
-	if pres.ReadAtCloser == nil {
+	if !pres.Backed() {
 		if err := pres.load(st); err != nil && !errors.Is(err, errStoreNotExists) {
 			return err
 		}
