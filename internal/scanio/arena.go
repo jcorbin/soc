@@ -865,6 +865,8 @@ func (fa *FileArena) doClose() error {
 		fa.backErr = errClosed
 	}
 	fa.back = nil
+	fa.size = 0
+	fa.known = false
 	fa.offset = 0
 	fa.buf = fa.buf[:0]
 	return err
