@@ -633,10 +633,9 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 
 		// track yesterday body remnant for potential header elision
 		yesterday := pres.sections[yesterdaySection]
-		remnant := byteRanges{yesterday.body}
-		remove := func(br byteRange) scanio.Token {
-			remnant.sub(br)
-			tok := far.Ref(int(br.start), int(br.end))
+		remnant := scanio.MakeArea(far.Ref(int(yesterday.body.start), int(yesterday.body.end)))
+		remove := func(tok scanio.Token) scanio.Token {
+			remnant.Sub(tok)
 			ed.Remove(tok)
 			return tok
 		}
@@ -653,20 +652,22 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 				fmt.Fprintf(cur, "## %v\n\n", name)
 			} else if !pres.sectionRemains[i] {
 				// carry forward non-remnant sub-sections (e.g. TODO and WIP)
-				cur.Insert(remove(sec.byteRange))
+				cur.Insert(remove(far.Ref(int(sec.start), int(sec.end))))
 			} else {
 				// leave remnant sections behind (e.g. Done)
 
 				// elide yesterday sub-header if it would start out the day;
 				// i.e. this erases the "## Done" header inside each day
 				header := sec.header()
-				if remnant[0].start == header.start {
+				headerTok := far.Ref(int(header.start), int(header.end))
+
+				if offset, headerRemains := remnant.Find(int(header.start)); headerRemains && offset == 0 {
 					// TODO more configurable header elision/replacement?
-					remove(header)
+					remove(headerTok)
 				}
 
 				// move or copy the yesterday sub-header into today
-				cur.Insert(far.Ref(int(header.start), int(header.end)))
+				cur.Insert(headerTok)
 			}
 
 			// TODO support pulling down future items
