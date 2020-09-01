@@ -606,7 +606,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		return nil
 	}
 	// under a pending atomic update
-	return pres.update(st, func(w io.Writer) (rerr error) {
+	return pres.edit(st, func(ed *scanio.Editor) error {
 		// write the user a message on the way out
 		defer func() {
 			if pres.sections[yesterdaySection].id != 0 {
@@ -616,23 +616,9 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 			}
 		}()
 
-		// TODO refactor pres.update around Editor
 		// TODO run the byteRange => scanio.Token conversion up through the section struct type
 		// TODO rework scanning around a FileArena
 		// TODO factor out a batter scanner v2, aka scanio.Rescanner from what everges
-
-		// never loose a single byte of original stream content: setup to copy
-		// all bytes through; the code below then will subtract processed
-		// sections from this pending "copy the rest" sword
-		var ed scanio.Editor
-		if all := pres.RefAll(); !all.Empty() {
-			ed.Append(all)
-		}
-		defer func() {
-			if rerr == nil {
-				_, rerr = ed.WriteTo(w)
-			}
-		}()
 
 		// if we found yesterday, cut stream content in half before/after its
 		// head, and then copy the head
@@ -687,6 +673,22 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		}
 
 		return nil
+	})
+}
+
+func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) error {
+	return pres.update(st, func(w io.Writer) (rerr error) {
+		var ed scanio.Editor
+		defer func() {
+			if rerr == nil {
+				_, rerr = ed.WriteTo(w)
+			}
+		}()
+
+		if all := pres.RefAll(); !all.Empty() {
+			ed.Append(all)
+		}
+		return with(&ed)
 	})
 }
 
