@@ -98,22 +98,22 @@ func (mux serveMux) help() server {
 	return serverFunc(mux.serveHelp)
 }
 
-func (ctx context) Command() string {
+func (ctx *context) Command() string {
 	return string(socui.QuotedArgs(ctx.args))
 }
 
-func (ctx context) CommandHead() string {
+func (ctx *context) CommandHead() string {
 	return ctx.args[len(ctx.args)-1]
 }
 
-func (ctx context) Commands() []string {
+func (ctx *context) Commands() []string {
 	if ctx.mux == nil {
 		return nil
 	}
 	return ctx.mux.Commands()
 }
 
-func (ctx context) Describe(name string) string {
+func (ctx *context) Describe(name string) string {
 	if ctx.mux == nil {
 		return ""
 	}
@@ -419,7 +419,7 @@ func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) (rerr error) {
 		}
 	}
 
-	ctx := ui.context
+	ctx := &ui.context
 
 	{
 		year, month, day := req.Now().Date()
@@ -438,5 +438,5 @@ func (ui *ui) ServeUser(req *socui.Request, res *socui.Response) (rerr error) {
 		return err
 	}
 
-	return ui.mux.serve(&ctx, req, res)
+	return ui.mux.serve(ctx, req, res)
 }
