@@ -444,43 +444,6 @@ func (rs *readState) Size() int64 {
 	return rs.size
 }
 
-func (rs *readState) writeSectionsInto(dst io.Writer, secs ...byteRange) (written int64, err error) {
-	if rs.err != nil {
-		return 0, rs.err
-	}
-
-	if rs.copyBuf == nil {
-		rs.copyBuf = make([]byte, 32*1024)
-	}
-
-	for _, sec := range secs {
-		for off, limit := sec.start, sec.end; off < limit; {
-			p := rs.copyBuf
-			if max := int(limit - off); len(p) > max {
-				p = p[:max]
-			}
-			nr, er := rs.ReadAt(p, off)
-			off += int64(nr)
-			if p = p[:nr]; len(p) > 0 {
-				nw, ew := dst.Write(p)
-				written += int64(nw)
-				if ew != nil {
-					return written, ew
-				}
-				if nw != nr {
-					return written, io.ErrShortWrite
-				}
-			}
-			if er == io.EOF {
-				break
-			} else if er != nil {
-				return written, er
-			}
-		}
-	}
-	return written, nil
-}
-
 func (rs *readState) open(rc io.ReadCloser, err error) error {
 	if errors.Is(err, errStoreNotExists) {
 		return nil
@@ -492,6 +455,7 @@ func (rs *readState) open(rc io.ReadCloser, err error) error {
 	rs.err = nil
 	return err
 }
+
 type writeState struct {
 	w   io.Writer
 	err error
