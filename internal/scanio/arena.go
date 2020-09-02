@@ -487,6 +487,15 @@ type Arena interface {
 	bytes(byteRange) ([]byte, error)
 }
 
+// Open returns an io.ReadSeeker over an Arena's content.
+// The returned reader also implements ReaderAt.
+func Open(ar Arena) io.ReadSeeker {
+	// TODO a cleverer implementation could drive arena.load to stride forward
+	// by buffer capacity, rather than loading reading windows
+	// NOTE similar strategy is wanted by other sequential use cases like rescanner
+	return io.NewSectionReader(ar, 0, ar.Size())
+}
+
 var (
 	_ Arena = &arena{}
 	_ Arena = Token{}

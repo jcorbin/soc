@@ -526,7 +526,7 @@ func (pres *presentDay) load(st store) (rerr error) {
 
 	// setup the outine scanner and utilities
 	var sc outlineScanner
-	sc.Reset(tokenReader(pres.RefAll(), pres))
+	sc.Reset(scanio.Open(pres.RefAll()))
 
 	// mark opens a new section, retaining its title bytes for later use.
 	mark := func(i presentSection) {
@@ -598,12 +598,6 @@ func (pres *presentDay) load(st store) (rerr error) {
 	}
 
 	return nil
-}
-
-func tokenReader(tok scanio.Token, ra io.ReaderAt) *io.SectionReader {
-	start, end := tok.Start(), tok.End()
-	n := end - start
-	return io.NewSectionReader(ra, int64(start), int64(n))
 }
 
 // collect performs a stream update if no today section has been found, writing
