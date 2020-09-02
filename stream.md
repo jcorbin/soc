@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-08-31
+# 2020-09-01
 
 ## TODO
 
@@ -99,6 +99,11 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scanio] fix several latent bugs in `FileArena`
+- [cmd/soc] drop `readState`, switch fully to `scanio.FileArena`
+
+# 2020-08-31
 
 - Added `scanio.Area` to support the today collect remnant use case, currently
   filled by `byteRanges`; switch to it under today collection, making way to
