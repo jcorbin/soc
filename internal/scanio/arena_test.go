@@ -334,7 +334,7 @@ func TestArea_Sub(t *testing.T) {
 	}
 }
 
-func TestArena_ReadAt(t *testing.T) {
+func Test_arena_ReadAt(t *testing.T) {
 	t.Run("empty", func(t *testing.T) {
 		empty := strings.NewReader("")
 		var far FileArena

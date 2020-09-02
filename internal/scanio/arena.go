@@ -38,13 +38,29 @@ func CopyTokens(dest io.Writer, tokens ...Token) (written int64, _ error) {
 			ranges = compactRanges(ranges)
 		}
 
-		m, err := arena.writeInto(dest, ranges...)
+		m, err := writeByteRangesInto(dest, arena, ranges...)
 		written += m
 		if err != nil {
 			return written, err
 		}
 	}
 	return written, nil
+}
+
+func writeByteRangesInto(dest io.Writer, src Arena, brs ...byteRange) (int64, error) {
+	var n int64
+	for _, br := range brs {
+		b, err := src.bytes(br)
+		m, we := dest.Write(b)
+		if err == nil {
+			err = we
+		}
+		n += int64(m)
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 func compactRanges(ranges []byteRange) []byteRange {
@@ -177,6 +193,58 @@ func (ar *arena) writeInto(w io.Writer, brs ...byteRange) (written int64, rerr e
 	return written, nil
 }
 
+// Size returns the arena size: if the arena has backing storage this will be
+// the total virtual size, otherwise it is just the size of any in memory
+// content.
+func (ar *arena) Size() int64 {
+	ar.bufMu.Lock()
+	defer ar.bufMu.Unlock()
+	if ar.back == nil {
+		return int64(len(ar.buf))
+	}
+	if err := ar.knowSize(); err != nil {
+		return 0
+	}
+	return ar.size
+}
+
+// ReadAt implements io.ReaderAt that first tries to copy out of arena internal
+// memory before falling back to a backing store read ( that will also cache
+// back to arena internal memory ).
+func (ar *arena) ReadAt(p []byte, off int64) (n int, err error) {
+	if ar == nil {
+		return 0, nil
+	}
+	if ar.back == nil {
+		return 0, errNoBacking
+	}
+
+	ar.bufMu.Lock()
+	defer ar.bufMu.Unlock()
+	if err := ar.backErr; err != nil {
+		return 0, err
+	}
+
+	var br byteRange
+	br.end = int(off)
+	for err == nil && len(p) > 0 {
+		br.start = br.end
+		br.end += len(p)
+		var rel byteRange
+		if rel, err = ar.load(br); rel.len() > 0 {
+			m := copy(p, ar.buf[rel.start:rel.end])
+			p = p[m:]
+			n += m
+			br.end = br.start + m
+		}
+	}
+
+	if int64(br.end) >= ar.size {
+		err = io.EOF
+	}
+	return n, err
+}
+
 func (ar *arena) knowSize() error {
 	if ar.known {
 		return nil
@@ -295,7 +363,17 @@ func readerAtSize(ra io.ReaderAt) (int64, bool) {
 // Token is a handle to a range of bytes under an arena.
 type Token struct {
 	byteRange
-	arena *arena
+	arena Arena
+}
+
+func (ar *arena) bytes(br byteRange) ([]byte, error) {
+	ar.bufMu.Lock()
+	defer ar.bufMu.Unlock()
+	rel, err := ar.load(br)
+	if err != nil {
+		return nil, err
+	}
+	return ar.buf[rel.start:rel.end], nil
 }
 
 // Bytes returns a reference to the token bytes within the internal arena buffer.
@@ -306,17 +384,13 @@ func (token Token) Bytes() ([]byte, error) {
 	if token.arena == nil {
 		return nil, errNoArena
 	}
-
-	token.arena.bufMu.Lock()
-	defer token.arena.bufMu.Unlock()
-	rel, err := token.arena.load(token.byteRange)
+	b, err := token.arena.bytes(token.byteRange)
 	if err != nil {
 		return nil, err
+	} else if len(b) < token.len() {
+		return nil, errLargeRead
 	}
-	if rel.len() < token.len() {
-		err = errLargeRead
-	}
-	return token.arena.buf[rel.start:rel.end], err
+	return b, nil
 }
 
 // Text returns a string copy of the token bytes from the internal arena buffer.
@@ -371,6 +445,26 @@ func (token Token) End() int { return token.end }
 
 // End returns the token byte length.
 func (token Token) Len() int { return token.len() }
+
+// Arena is a sized ReaderAt (i.e. a file-like object) against which referent
+// Tokens may be taken within content space. How much of and when this space is
+// in-memory vs read on-demand from backing storage is implementation specific.
+//
+// It may only be implemented by internal "scanio" package types: primarily by
+// ByteArena and FileArena.
+type Arena interface {
+	io.ReaderAt
+	Size() int64
+	Ref(start, end int) Token
+
+	bytes(byteRange) ([]byte, error)
+}
+
+var (
+	_ Arena = &arena{}
+	_ Arena = &ByteArena{}
+	_ Arena = &FileArena{}
+)
 
 // Sub subtracts an other token from the receiver if they overlap.
 // If they do not share an arena (an extreme case of no overlap), the receiver
@@ -430,7 +524,7 @@ func MakeArea(tokens ...Token) (ar Area) {
 // Token ranges may be added and removed efficiently.
 // The area may be written and formatted similarly to a Token.
 type Area struct {
-	arena  *arena
+	arena  Arena
 	ranges []byteRange
 }
 
@@ -440,7 +534,7 @@ func (ar *Area) WriteTo(dest io.Writer) (n int64, err error) {
 	if ar.arena == nil || len(ar.ranges) == 0 {
 		return
 	}
-	return ar.arena.writeInto(dest, ar.ranges...)
+	return writeByteRangesInto(dest, ar.arena, ar.ranges...)
 }
 
 // AppendTokens appends Token references for each of the area's byte ranges
@@ -733,6 +827,53 @@ type ByteArena struct {
 	cur int // write cursor
 }
 
+// Ref returns a referent token within an arena.
+// If the arena has backing storage, start and end are within its virtual byte space.
+// Otherwise the token is simply within the buffer's internal in-memory bytes.
+// The returned token byte range is clipped to the [0, size] interval.
+// Returns the zero-Token if start > end.
+func (ar *arena) Ref(start, end int) (token Token) {
+	if start > end {
+		return token
+	}
+
+	ar.bufMu.Lock()
+	defer ar.bufMu.Unlock()
+
+	if ar.back != nil && ar.knowSize() != nil {
+		return token
+	}
+
+	token.arena = ar
+
+	if start < 0 {
+		token.start = 0
+	} else {
+		token.start = start
+	}
+
+	n := len(ar.buf)
+	if ar.known {
+		n = int(ar.size)
+	}
+	if end > n {
+		end = n
+	}
+	token.end = end
+
+	return token
+}
+
+// RefN is a convenience for Ref(start, start + n)
+func (ar *arena) RefN(start, n int) Token {
+	return ar.Ref(start, start+n)
+}
+
+// RefAll a convenience for Ref(0, Size())
+func (ar *arena) RefAll() Token {
+	return ar.Ref(0, int(ar.Size()))
+}
+
 // Write stores p bytes into the internal buffer, returning len(p) and nil error.
 func (ba *ByteArena) Write(p []byte) (int, error) {
 	ba.bufMu.Lock()
@@ -886,89 +1027,7 @@ func (fa *FileArena) doClose() error {
 	return err
 }
 
-// Size returns the, presumably fixed, size of the backing storage
-func (fa *FileArena) Size() int64 {
-	if fa.arena == nil {
-		return 0
-	}
-	fa.bufMu.Lock()
-	defer fa.bufMu.Unlock()
-	return fa.size
-}
-
-// Ref return a referent token within virtual byte space up to size.
-// Its Bytes() will either be service from an in-memory buffer, or read and
-// cached for future access.
-// The returned token byte range is clipped to the [0, size] interval.
-// Returns the zero-Token if start > end.
-func (fa *FileArena) Ref(start, end int) (token Token) {
-	if fa.arena == nil || start > end {
-		return token
-	}
-
-	fa.bufMu.Lock()
-	defer fa.bufMu.Unlock()
-	token.arena = fa.arena
-	if start < 0 {
-		token.start = 0
-	} else {
-		token.start = start
-	}
-	if n := int(fa.size); end > n {
-		token.end = n
-	} else {
-		token.end = end
-	}
-	return token
-}
-
 // Owns returns true only if token refers to the receiver arena.
 func (fa *FileArena) Owns(token Token) bool {
 	return token.arena == fa.arena
-}
-
-// RefN is a convenience for Ref(start, start + n)
-func (fa *FileArena) RefN(start, n int) Token {
-	return fa.Ref(start, start+n)
-}
-
-// RefAll a convenience for Ref(0, Size())
-func (fa *FileArena) RefAll() Token {
-	return fa.Ref(0, int(fa.size))
-}
-
-// ReadAt implements io.ReaderAt that first tries to copy out of arena internal
-// memory before falling back to a backing store read ( that will also cache
-// back to arena internal memory ).
-func (fa FileArena) ReadAt(p []byte, off int64) (n int, err error) {
-	if fa.arena == nil {
-		return 0, nil
-	}
-	if fa.back == nil {
-		return 0, errNoBacking
-	}
-	fa.bufMu.Lock()
-	defer fa.bufMu.Unlock()
-	if err := fa.backErr; err != nil {
-		return 0, err
-	}
-
-	var br byteRange
-	br.end = int(off)
-	for err == nil && len(p) > 0 {
-		br.start = br.end
-		br.end += len(p)
-		var rel byteRange
-		if rel, err = fa.load(br); rel.len() > 0 {
-			m := copy(p, fa.arena.buf[rel.start:rel.end])
-			p = p[m:]
-			n += m
-			br.end = br.start + m
-		}
-	}
-
-	if int64(br.end) >= fa.size {
-		err = io.EOF
-	}
-	return n, err
 }
