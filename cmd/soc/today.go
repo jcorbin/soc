@@ -678,34 +678,28 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 	})
 }
 
-func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) error {
-	return pres.update(st, func(w io.Writer) (rerr error) {
-		var ed scanio.Editor
-		defer func() {
-			if rerr == nil {
-				_, rerr = ed.WriteTo(w)
-			}
-		}()
-
-		if all := pres.RefAll(); !all.Empty() {
-			ed.Append(all)
-		}
-		return with(&ed)
-	})
-}
-
-// update runs the given with function under a pending atomic stream update.
-// The stream update is aborted on any error, cleaning up any temporary data.
-// Otherwise the completed temporary data will replace the prior stream
-// content, and presentDay.load() will be called to reload the newly written
-// state.
-func (pres *presentDay) update(st store, with func(w io.Writer) error) (rerr error) {
+// edit runs the given function with an editor loaded with the currently
+// scanned stream's content. If with returns nil error, the editor content is
+// then written out to an atomic store update. If all of that succeeds, the
+// presentDay state is reloaded from the just-written stream file.
+func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) (rerr error) {
+	// load if not already loaded
 	if !pres.loaded {
 		if err := pres.load(st); err != nil && !errors.Is(err, errStoreNotExists) {
 			return err
 		}
 	}
 
+	// load editor and run with
+	var ed scanio.Editor
+	if all := pres.RefAll(); !all.Empty() {
+		ed.Append(all)
+	}
+	if err := with(&ed); err != nil {
+		return err
+	}
+
+	// start pending atomic store update
 	cwc, err := st.update()
 	if errors.Is(err, errStoreNotExists) {
 		cwc, err = st.create()
@@ -713,22 +707,25 @@ func (pres *presentDay) update(st store, with func(w io.Writer) error) (rerr err
 	if err != nil {
 		return err
 	}
-	var ws writeState
-	ws.w = cwc
 	defer func() {
-		if rerr == nil {
-			rerr = ws.err
-		}
-		if rerr == nil {
-			rerr = cwc.Close()
-		}
 		if cerr := cwc.Cleanup(); rerr == nil {
 			rerr = cerr
 		}
-		if rerr == nil {
-			rerr = pres.load(st)
-		}
 	}()
 
-	return with(&ws)
+	// write editor content
+	var ws writeState
+	ws.w = cwc
+	if _, err := ed.WriteTo(&ws); err != nil {
+		return err
+	}
+	if err := ws.err; err != nil {
+		return err
+	}
+	if err := cwc.Close(); err != nil {
+		return err
+	}
+
+	// reload
+	return pres.load(st)
 }
