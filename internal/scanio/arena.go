@@ -89,11 +89,19 @@ type arena struct {
 	known   bool        // true if we've checked for size
 }
 
-func (ar *arena) setBufSize(bufSize int) {
-	if bufSize > 0 {
-		ar.buf = make([]byte, 0, bufSize)
-	} else {
+// SetBufSize changes the arena's in-memory buffer size.
+// It will either allocate a new buffer and copy any prior contents, or nil-out
+// the buffer when passed 0. Any arena load a after such a 0/nil reset
+// will allocate a DefaultBufferSize buffer.
+func (ar *arena) SetBufSize(bufSize int) {
+	if bufSize == 0 {
 		ar.buf = nil
+	} else if len(ar.buf) > 0 {
+		old := ar.buf
+		ar.buf = make([]byte, len(old), bufSize)
+		copy(ar.buf, old)
+	} else {
+		ar.buf = make([]byte, 0, bufSize)
 	}
 }
 
