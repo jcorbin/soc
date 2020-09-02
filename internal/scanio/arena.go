@@ -228,11 +228,18 @@ func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 	if sz := int(ar.size); sz != 0 {
 		if rem := load.end - sz; rem > 0 {
 			load.end -= rem
+			if load.start > load.end {
+				load.start = load.end
+			}
 		}
 	}
 
+	if n = load.len(); n == 0 {
+		return byteRange{0, 0}, io.EOF
+	}
+
 	// do the read
-	buf = buf[:load.len()]
+	buf = buf[:n]
 	n, err = ar.back.ReadAt(buf, int64(load.start))
 	buf = buf[:n]
 	ar.buf, ar.offset = buf, load.start
@@ -927,14 +934,21 @@ func (fa *FileArena) ReadAt(p []byte, off int64) (n int, err error) {
 		return 0, err
 	}
 
+	var br byteRange
+	br.end = int(off)
 	for err == nil && len(p) > 0 {
-		var rel byteRange
-		if rel, err = fa.load(byteRange{int(off), int(off) + len(p)}); rel.len() > 0 {
-			m := copy(p, fa.arena.buf[rel.start:rel.end])
-			p = p[n:]
+		br.start = br.end
+		br.end += len(p)
+		if br, err = fa.load(br); br.len() > 0 {
+			m := copy(p, fa.arena.buf[br.start:br.end])
+			p = p[m:]
 			n += m
-			off += int64(m)
+			br.end = br.start + m
 		}
+	}
+
+	if int64(br.end) >= fa.size {
+		err = io.EOF
 	}
 	return n, err
 }

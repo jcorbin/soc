@@ -332,3 +332,90 @@ func TestArea_Sub(t *testing.T) {
 		})
 	}
 }
+
+func TestArena_ReadAt(t *testing.T) {
+	result := func(p []byte, n int) (rs string) {
+		defer func() {
+			if e := recover(); e != nil {
+				rs = fmt.Sprintf("!ERROR(%v)", e)
+			}
+		}()
+		return string(p[:n])
+	}
+
+	type readOp struct {
+		n   int
+		off int64
+	}
+
+	for _, tc := range []struct {
+		name    string
+		bufSize int
+		ra      io.ReaderAt
+		ops     []readOp
+	}{
+		{
+			name: "empty",
+			ra:   strings.NewReader(""),
+			ops: []readOp{
+				{0, 0}, // ""
+				{1, 0}, // ""
+			},
+		},
+
+		{
+			name: "lorem ipsum",
+			ra:   strings.NewReader(loremIpsum),
+			ops: []readOp{
+				{0, 0}, // ""
+				{5, 0}, // "Lorem"
+				{5, 6}, // "ipsum"
+				{10, 100},
+				{10, 200},
+				{10, 400},
+				{10, 800},
+				{10, 1600},
+			},
+		},
+
+		{
+			name:    "lorem ipsum (smol buf)",
+			ra:      strings.NewReader(loremIpsum),
+			bufSize: 16,
+			ops: []readOp{
+				{0, 0}, // ""
+				{5, 0}, // "Lorem"
+				{5, 6}, // "ipsum"
+				{10, 100},
+				{10, 200},
+				{10, 400},
+				{10, 800},
+				{10, 1600},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var far FileArena
+			far.Reset(tc.ra, 0)
+			far.SetBufSize(tc.bufSize)
+			for _, op := range tc.ops {
+				t.Run(fmt.Sprintf("%v@%v", op.n, op.off), func(t *testing.T) {
+					ap := make([]byte, op.n)
+					bp := make([]byte, op.n)
+					an, ae := tc.ra.ReadAt(ap, op.off)
+					bn, be := far.ReadAt(bp, op.off)
+					assert.Equal(t, result(ap, an), result(bp, bn), "expected output to match")
+					if ae == nil {
+						assert.NoError(t, be, "unexpected error")
+					} else {
+						assert.EqualError(t, be, ae.Error(), "expected error")
+					}
+					if t.Failed() {
+						t.Logf("expected n:%v err:%v", an, ae)
+						t.Logf("got n:%v err:%v", bn, be)
+					}
+				})
+			}
+		})
+	}
+}
