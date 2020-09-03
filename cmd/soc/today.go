@@ -585,17 +585,12 @@ func (pres *presentDay) load(st store) (rerr error) {
 		}
 	}
 
-	// return any scanner error
-	if err := pres.sc.Err(); err != nil {
-		return err
-	}
-
 	// close any still-open sections
 	for i, sec := range pres.sections {
 		pres.sections[i] = pres.sc.updateSection(sec)
 	}
 
-	return nil
+	return pres.sc.Err()
 }
 
 // collect performs a stream update if no today section has been found, writing
