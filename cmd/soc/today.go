@@ -262,7 +262,7 @@ type outlineMatch struct {
 	nextArg []int
 	within  []section
 
-	arena scanio.ByteArena
+	bar scanio.ByteArena
 }
 
 func (om *outlineMatch) empty() bool {
@@ -339,10 +339,10 @@ func (om *outlineMatch) pushPath(out *outline, nextArg int, sec section) {
 		}
 	}
 	for i := groupLen; i < len(out.id); i++ {
-		fmt.Fprint(&om.arena, out.title[i])
+		fmt.Fprint(&om.bar, out.title[i])
 		id := out.id[i]
 		block := out.block[i]
-		title := om.arena.Take()
+		title := om.bar.Take()
 		if id == sec.id {
 			om.push(group, id, block, title, nextArg, sec)
 			break
@@ -359,7 +359,7 @@ func (om *outlineMatch) truncate(i int) {
 	om.title = om.title[:i]
 	om.nextArg = om.nextArg[:i]
 	om.within = om.within[:i]
-	om.arena.PruneTo(om.title)
+	om.bar.PruneTo(om.title)
 }
 
 func (om *outlineMatch) maxNextArg() int {
@@ -396,8 +396,8 @@ func (om *outlineMatch) addInto(dest *outlineMatch, xlate []scanio.Token) []scan
 
 	for _, title := range om.title[len(xlate):] {
 		b, _ := title.Bytes()
-		dest.arena.Write(b)
-		xlate = append(xlate, dest.arena.Take())
+		dest.bar.Write(b)
+		xlate = append(xlate, dest.bar.Take())
 	}
 	offset := om.offset - dest.offset
 
