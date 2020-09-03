@@ -134,10 +134,11 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 			return nil, nil, nil
 		}
 		match, err = msc.matchOutline(&ctx.today, sec.body, patterns...)
-		if err == nil {
-			nextArg := match.maxNextArg()
-			remArgs = reqArgs[nextArg:]
+		if err != nil {
+			return nil, nil, err
 		}
+		nextArg := match.maxNextArg()
+		remArgs = reqArgs[nextArg:]
 		return match, remArgs, err
 	}
 
