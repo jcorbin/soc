@@ -466,6 +466,25 @@ var (
 	_ Arena = &FileArena{}
 )
 
+/* TODO if we need ownership checks
+func (token Token) Arena() Arena { return token.arena }
+
+func arenaOwns(ar Arena, tok Token) bool {
+	return unwrapArena(ar) == unwrapArena(tok.arena)
+}
+
+func unwrapArena(ar Arena) Arena {
+	for {
+		if subar, ok := ar.(interface{ Arena() Arena }); ok {
+			ar = subar.Arena()
+		} else {
+			break
+		}
+	}
+	return ar
+}
+*/
+
 // Sub subtracts an other token from the receiver if they overlap.
 // If they do not share an arena (an extreme case of no overlap), the receiver
 // token is simply returned as head, with an empty tail.
@@ -902,11 +921,6 @@ func (ba *ByteArena) Take() (token Token) {
 	return token
 }
 
-// Owns returns true only if token refers to the receiver arena.
-func (ba *ByteArena) Owns(token Token) bool {
-	return token.arena == &ba.arena
-}
-
 // Reset discards all bytes from the arena, resetting the internal buffer for reuse.
 func (ba *ByteArena) Reset() {
 	ba.bufMu.Lock()
@@ -1025,9 +1039,4 @@ func (fa *FileArena) doClose() error {
 	fa.offset = 0
 	fa.buf = fa.buf[:0]
 	return err
-}
-
-// Owns returns true only if token refers to the receiver arena.
-func (fa *FileArena) Owns(token Token) bool {
-	return token.arena == fa.arena
 }
