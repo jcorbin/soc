@@ -128,11 +128,12 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 	// doMatch tries to match as many arg as possible against a section,
 	// returning the match result set and any remaining args, or an error.
+	var msc outlineScanner
 	doMatch := func(sec section) (match *outlineMatch, remArgs []string, err error) {
 		if len(reqArgs) == 0 {
 			return nil, nil, nil
 		}
-		match, err = matchOutline(&ctx.today, sec.body, patterns...)
+		match, err = msc.matchOutline(&ctx.today, sec.body, patterns...)
 		if err == nil {
 			nextArg := match.maxNextArg()
 			remArgs = reqArgs[nextArg:]
@@ -184,15 +185,15 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	return ctx.today.sc.printOutline(res, filter)
 }
 
-func matchOutline(ra io.ReaderAt, within byteRange, patterns ...*regexp.Regexp) (*outlineMatch, error) {
+func (sc *outlineScanner) matchOutline(ra io.ReaderAt, within byteRange, patterns ...*regexp.Regexp) (*outlineMatch, error) {
 	var (
-		sc    outlineScanner
 		cur   outlineMatch   // the current match being scanned
 		set   outlineMatch   // collected match results to return
 		xlate []scanio.Token // used to copy titles during result collection
 	)
+	sc.Reset(within.readerWithin(ra))
 	cur.offset = within.start
-	for sc.Reset(within.readerWithin(ra)); sc.Scan(); {
+	for sc.Scan() {
 		for i, sec := range cur.within {
 			cur.within[i] = sc.updateSection(sec)
 		}
