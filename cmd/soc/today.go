@@ -129,17 +129,17 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	// doMatch tries to match as many arg as possible against a section,
 	// returning the match result set and any remaining args, or an error.
 	var msc outlineScanner
-	doMatch := func(sec section) (match *outlineMatch, remArgs []string, err error) {
+	doMatch := func(sec section) (_ *outlineMatch, remArgs []string, err error) {
 		if len(reqArgs) == 0 {
 			return nil, nil, nil
 		}
-		match, err = msc.matchOutline(&ctx.today, sec.body, patterns...)
-		if err != nil {
+		var match outlineMatch // collected match results to return
+		if err := msc.matchOutline(&match, &ctx.today, sec.body, patterns...); err != nil {
 			return nil, nil, err
 		}
 		nextArg := match.maxNextArg()
 		remArgs = reqArgs[nextArg:]
-		return match, remArgs, err
+		return &match, remArgs, err
 	}
 
 	// match as many args as possible against prior items
@@ -186,10 +186,9 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	return ctx.today.sc.printOutline(res, filter)
 }
 
-func (sc *outlineScanner) matchOutline(ra io.ReaderAt, within byteRange, patterns ...*regexp.Regexp) (*outlineMatch, error) {
+func (sc *outlineScanner) matchOutline(into *outlineMatch, ra io.ReaderAt, within byteRange, patterns ...*regexp.Regexp) error {
 	var (
 		cur   outlineMatch   // the current match being scanned
-		set   outlineMatch   // collected match results to return
 		xlate []scanio.Token // used to copy titles during result collection
 	)
 	sc.Reset(within.readerWithin(ra))
@@ -206,7 +205,7 @@ func (sc *outlineScanner) matchOutline(ra io.ReaderAt, within byteRange, pattern
 		// truncate current match after any of its items exit
 		for i := 0; i < len(cur.matched); i++ {
 			if i >= len(sc.id) || sc.id[i] != cur.matched[i] {
-				xlate = cur.resultInto(&set, xlate)
+				xlate = cur.resultInto(into, xlate)
 				cur.truncate(i)
 				if i < len(xlate) {
 					xlate = xlate[:i]
@@ -239,7 +238,7 @@ func (sc *outlineScanner) matchOutline(ra io.ReaderAt, within byteRange, pattern
 		outlineTitle := sc.title[len(sc.title)-1] // TODO scan just inline content, ignoring structure
 		b, err := outlineTitle.Bytes()
 		if err != nil {
-			return nil, err
+			return err
 		}
 		loc := pattern.FindIndex(b)
 		if len(loc) == 0 {
@@ -250,9 +249,9 @@ func (sc *outlineScanner) matchOutline(ra io.ReaderAt, within byteRange, pattern
 		// add new matched outline node(s) with a newly opened section
 		cur.pushPath(&sc.outline, nextArg, sc.openSection())
 	}
-	xlate = cur.resultInto(&set, xlate) // collect any last match
+	xlate = cur.resultInto(into, xlate) // collect any last match
 
-	return &set, sc.Err()
+	return sc.Err()
 }
 
 type outlineMatch struct {
