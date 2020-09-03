@@ -180,7 +180,8 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	// }
 	// _, err := io.Copy(res, raw)
 
-	return printOutline(res, body, filter)
+	ctx.today.sc.Reset(body)
+	return ctx.today.sc.printOutline(res, filter)
 }
 
 func matchOutline(ra io.ReaderAt, within byteRange, patterns ...*regexp.Regexp) (*outlineMatch, error) {

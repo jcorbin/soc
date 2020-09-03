@@ -493,11 +493,8 @@ func isOneOfType(t scandown.BlockType, oneOf ...scandown.BlockType) bool {
 	return false
 }
 
-func printOutline(to io.Writer, from io.Reader, filters ...outlineFilter) error {
-	var sc outlineScanner
+func (sc *outlineScanner) printOutline(to io.Writer, filters ...outlineFilter) error {
 	filter := outlineFilters(filters...)
-	sc.Reset(from)
-
 	var (
 		id  []int
 		n   []int
