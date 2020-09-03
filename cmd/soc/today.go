@@ -476,6 +476,33 @@ func (pc presentConfig) matchSectionIndex(match []int) int {
 	return -1
 }
 
+// open resets receiver state and (re)opens its FileArena from the given store.
+func (pres *presentDay) open(st store) error {
+	if err := pres.reset(); err != nil {
+		return err
+	}
+	rc, err := st.open()
+	if err != nil {
+		return err
+	}
+	ra, size, err := sizedReaderAt(rc)
+	if err != nil {
+		return err
+	}
+	return pres.FileArena.Reset(ra, size)
+}
+
+func (pres *presentDay) reset() error {
+	err := pres.Close()
+	base := int(firstVarSection)
+	max := base + pres.sectionPattern.NumSubexp()
+	pres.sections = make([]section, base, max)
+	pres.titles = make([]scanio.Token, base, max)
+	pres.arena.Reset()
+	pres.loaded = false
+	return err
+}
+
 // load reads present day section data from a stream store, retaining the
 // opened reader within for further use (e.g. to actually do anything with
 // section contents).
@@ -484,8 +511,7 @@ func (pc presentConfig) matchSectionIndex(match []int) int {
 // Within whichever one it finds, it then looks for the names listed in
 // todaySectionNames.
 func (pres *presentDay) load(st store) (rerr error) {
-	// close any prior storage reader
-	if err := pres.Close(); err != nil {
+	if err := pres.open(st); err != nil && !errors.Is(err, errStoreNotExists) {
 		return err
 	}
 	defer func() {
@@ -494,41 +520,8 @@ func (pres *presentDay) load(st store) (rerr error) {
 		}
 	}()
 
-	// reset internal storage state
-	{
-		base := int(firstVarSection)
-		max := base + pres.sectionPattern.NumSubexp()
-		pres.sections = make([]section, base, max)
-		pres.titles = make([]scanio.Token, base, max)
-		pres.arena.Reset()
-		pres.loaded = false
-	}
-
-	// open a new storage reader, and convert it for random access ala
-	// io.ReaderAt, which may end up sponging the source into a tempfile if it
-	// doesn't support random access
-	var (
-		ra   io.ReaderAt
-		size int64
-	)
-	rc, err := st.open()
-	if err == nil {
-		ra, size, err = sizedReaderAt(rc)
-	} else if errors.Is(err, errStoreNotExists) {
-		err = nil
-	}
-	if err == nil {
-		err = pres.FileArena.Reset(ra, size)
-	}
-	if err != nil {
-		return err
-	}
-
-	// setup the outine scanner and utilities
-	var sc outlineScanner
-	sc.Reset(scanio.Open(pres.RefAll()))
-
 	// mark opens a new section, retaining its title bytes for later use.
+	var sc outlineScanner
 	mark := func(i presentSection) {
 		fmt.Fprint(&pres.arena, &sc.outline)
 		pres.sections[i] = sc.openSection()
@@ -536,6 +529,7 @@ func (pres *presentDay) load(st store) (rerr error) {
 	}
 
 	// scan the stream...
+	sc.Reset(scanio.Open(pres.FileArena))
 	for sc.Scan() {
 		// ...ending any open sections that we are no longer within
 		for i, sec := range pres.sections {
