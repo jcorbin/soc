@@ -68,10 +68,11 @@ func compactRanges(ranges []byteRange) []byteRange {
 }
 
 var (
-	errNoArena   = errors.New("token has no arena")
-	errNoBacking = errors.New("arena has no backing store")
-	errLargeRead = errors.New("token size exceeds arena buffer capacity")
-	errClosed    = errors.New("arena closed")
+	errNoArena    = errors.New("token has no arena")
+	errNoBacking  = errors.New("arena has no backing store")
+	errLargeRead  = errors.New("token size exceeds arena buffer capacity")
+	errClosed     = errors.New("arena closed")
+	errNoBackSize = errors.New("unable to determine backing storage size")
 )
 
 // DefaultBufferSize is the default in-memory buffer size to allocate when
@@ -174,6 +175,18 @@ func (ar *arena) writeInto(w io.Writer, brs ...byteRange) (written int64, rerr e
 	return written, nil
 }
 
+func (ar *arena) knowSize() error {
+	if ar.known {
+		return nil
+	}
+	if size, ok := readerAtSize(ar.back); ok {
+		ar.size = size
+		ar.known = true
+		return nil
+	}
+	return errNoBackSize
+}
+
 func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 	buf := ar.buf
 	rel = req.add(-ar.offset) // relativize
@@ -195,9 +208,8 @@ func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 	}
 
 	// determine reader size if not yet known
-	if !ar.known {
-		ar.size, _ = readerAtSize(ar.back)
-		ar.known = true
+	if err := ar.knowSize(); err != nil {
+		return byteRange{}, err
 	}
 
 	// truncate up to buffer capacity
