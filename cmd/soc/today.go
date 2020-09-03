@@ -427,6 +427,7 @@ type presentConfig struct {
 
 type presentDay struct {
 	presentConfig
+	sc outlineScanner
 
 	scanio.FileArena
 	loaded   bool
@@ -477,7 +478,11 @@ func (pc presentConfig) matchSectionIndex(match []int) int {
 }
 
 // open resets receiver state and (re)opens its FileArena from the given store.
-func (pres *presentDay) open(st store) error {
+func (pres *presentDay) open(st store) (rerr error) {
+	defer func() {
+		pres.sc.Reset(scanio.Open(pres.FileArena))
+	}()
+
 	if err := pres.reset(); err != nil {
 		return err
 	}
@@ -521,34 +526,32 @@ func (pres *presentDay) load(st store) (rerr error) {
 	}()
 
 	// mark opens a new section, retaining its title bytes for later use.
-	var sc outlineScanner
 	mark := func(i presentSection) {
-		fmt.Fprint(&pres.arena, &sc.outline)
-		pres.sections[i] = sc.openSection()
+		fmt.Fprint(&pres.arena, &pres.sc.outline)
+		pres.sections[i] = pres.sc.openSection()
 		pres.titles[i] = pres.arena.Take()
 	}
 
 	// scan the stream...
-	sc.Reset(scanio.Open(pres.FileArena))
-	for sc.Scan() {
+	for pres.sc.Scan() {
 		// ...ending any open sections that we are no longer within
 		for i, sec := range pres.sections {
-			pres.sections[i] = sc.updateSection(sec)
+			pres.sections[i] = pres.sc.updateSection(sec)
 		}
 
 		// skip any markdown blocks that don't define an outline item title
-		if !sc.titled {
+		if !pres.sc.titled {
 			continue
 		}
 
 		// skip any outline items that a time
-		t := sc.lastTime()
+		t := pres.sc.lastTime()
 		if t.Grain() == 0 {
 			continue
 		}
 
 		// we only care to process toplevel titles
-		title, isToplevel := sc.heading(1)
+		title, isToplevel := pres.sc.heading(1)
 
 		// anything with an empty title (remnant) contains only the (already
 		// parsed away) time, so check for today or yesterday
@@ -582,13 +585,13 @@ func (pres *presentDay) load(st store) (rerr error) {
 	}
 
 	// return any scanner error
-	if err := sc.Err(); err != nil {
+	if err := pres.sc.Err(); err != nil {
 		return err
 	}
 
 	// close any still-open sections
 	for i, sec := range pres.sections {
-		pres.sections[i] = sc.updateSection(sec)
+		pres.sections[i] = pres.sc.updateSection(sec)
 	}
 
 	return nil
