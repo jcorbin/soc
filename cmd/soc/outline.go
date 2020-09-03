@@ -62,21 +62,24 @@ type outline struct {
 // Example:
 //
 // 	var out outlineScanner
-// 	out.Reset(src)
+// 	out.Reset(token)
 // 	for out.Scan() {
 // 		if out.titled {
 // 			log.Println(out)
 // 		}
 // 	}
 type outlineScanner struct {
-	*bufio.Scanner
+	*bufio.Scanner // TODO integrate with arena
+
+	arena scanio.Arena
 	block scandown.BlockStack
 	outline
 }
 
 // Reset (re)initializes receiver state to scan a new outline from src.
-func (sc *outlineScanner) Reset(src io.Reader) {
-	sc.Scanner = bufio.NewScanner(src)
+func (sc *outlineScanner) Reset(arena scanio.Arena) {
+	sc.arena = arena
+	sc.Scanner = bufio.NewScanner(scanio.Open(arena))
 	sc.Scanner.Split(sc.block.Scan)
 	sc.block.Reset()
 	sc.truncate(0)
@@ -301,7 +304,7 @@ func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.Grain
 //		interesting []section
 //		out         outlineScanner
 //	)
-// 	for out.Reset(src); out.Scan(); {
+// 	for out.Reset(token); out.Scan(); {
 // 		for i, sec := range interesting {
 // 			interesting[i] = out.updateSection(sec)
 // 		}
@@ -310,21 +313,16 @@ func (out *outline) readTitle(t isotime.GrainedTime, r io.Reader) (isotime.Grain
 // 		}
 // 	}
 type section struct {
-	byteRange
-	body byteRange
-	id   int
+	scanio.Token
+	bodyStart int
+	id        int
+
+	scanning  bool
+	scanStart int
 }
 
-func (sec section) add(offset int64) section {
-	sec.byteRange = sec.byteRange.add(offset)
-	sec.body = sec.body.add(offset)
-	return sec
-}
-
-func (sec section) header() byteRange {
-	sec.end = sec.body.start
-	return sec.byteRange
-}
+func (sec section) header() scanio.Token { return sec.Token.Slice(0, sec.bodyStart) }
+func (sec section) body() scanio.Token   { return sec.Token.Slice(sec.bodyStart, -1) }
 
 // openSection returns a new section whose heading is the current block just scanned.
 // The section's id is anchored to the last Heading or Item block; for a
@@ -335,10 +333,9 @@ func (sc *outlineScanner) openSection() (sec section) {
 	if !sc.titled {
 		return section{}
 	}
-	sec.start = sc.block.Offset()
-	sec.body = sec.byteRange
-	sec.body.start += int64(len(sc.Bytes()))
-	sec.end = -1
+	sec.scanning = true
+	sec.scanStart = int(sc.block.Offset())
+	sec.bodyStart = len(sc.Bytes())
 	for i := len(sc.id) - 1; i >= 0; i-- {
 		if isOneOfType(sc.outline.block[i].Type, scandown.Heading, scandown.Item) {
 			sec.id = sc.id[i]
@@ -364,21 +361,21 @@ func (sc *outlineScanner) within(sec section) bool {
 // path.
 func (sc *outlineScanner) updateSection(sec section) section {
 	// skip if not open or ended
-	if sec.id == 0 || sec.end >= 0 {
+	if sec.id == 0 || !sec.scanning {
 		return sec
 	}
 
 	// end if not within
 	if !sc.within(sec) {
-		sec.end = sc.block.Offset()
-		sec.body.end = sec.end
+		sec.Token = sc.arena.Ref(sec.scanStart, int(sc.block.Offset()))
+		sec.scanning = false
 		return sec
 	}
 
 	// trim initial Blank from body
 	if id := sc.block.HeadID(); id == sec.id+1 {
 		if b, _ := sc.block.Head(); b.Type == scandown.Blank {
-			sec.body.start = sc.block.Offset() + int64(len(sc.Bytes()))
+			sec.bodyStart += len(sc.Bytes())
 		}
 	}
 
@@ -462,6 +459,7 @@ type outlineFilter interface{ match(out *outline) bool }
 type outlineFilterConst bool
 type outlineFilterAnd []outlineFilter
 type outlineFilterFunc func(out *outline) bool
+
 func (c outlineFilterConst) match(out *outline) bool { return bool(c) }
 func (f outlineFilterFunc) match(out *outline) bool  { return f(out) }
 func (fs outlineFilterAnd) match(out *outline) bool {
@@ -474,11 +472,13 @@ func (fs outlineFilterAnd) match(out *outline) bool {
 }
 
 type outlineTimeGrainFilter isotime.TimeGrain
+
 func (tg outlineTimeGrainFilter) match(out *outline) bool {
 	return out.lastTime().Grain() >= isotime.TimeGrain(tg)
 }
 
 type outlineLevelFilter int
+
 func (l outlineLevelFilter) match(out *outline) bool {
 	_, is := out.heading(int(l))
 	return is

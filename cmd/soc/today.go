@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"regexp"
 	"strings"
@@ -134,7 +133,8 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 			return nil, nil, nil
 		}
 		var match outlineMatch // collected match results to return
-		if err := msc.matchOutline(&match, &ctx.today, sec.body, patterns...); err != nil {
+		match.arena = &ctx.today
+		if err := msc.matchOutline(&match, sec.body(), patterns...); err != nil {
 			return nil, nil, err
 		}
 		nextArg := match.maxNextArg()
@@ -162,7 +162,6 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 	// print matched/added item(s)
 	var (
-		body   io.Reader = sec.body.readerWithin(&ctx.today)
 		filter outlineFilter
 	)
 
@@ -182,17 +181,17 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	// }
 	// _, err := io.Copy(res, raw)
 
-	ctx.today.sc.Reset(body)
+	ctx.today.sc.Reset(sec.body())
 	return ctx.today.sc.printOutline(res, filter)
 }
 
-func (sc *outlineScanner) matchOutline(into *outlineMatch, ra io.ReaderAt, within byteRange, patterns ...*regexp.Regexp) error {
+func (sc *outlineScanner) matchOutline(into *outlineMatch, arena scanio.Arena, patterns ...*regexp.Regexp) error {
 	var (
 		cur   outlineMatch   // the current match being scanned
 		xlate []scanio.Token // used to copy titles during result collection
 	)
-	sc.Reset(within.readerWithin(ra))
-	cur.offset = within.start
+	sc.Reset(arena)
+	cur.arena = arena
 	for sc.Scan() {
 		for i, sec := range cur.within {
 			cur.within[i] = sc.updateSection(sec)
@@ -255,7 +254,7 @@ func (sc *outlineScanner) matchOutline(into *outlineMatch, ra io.ReaderAt, withi
 }
 
 type outlineMatch struct {
-	offset int64
+	arena scanio.Arena
 
 	group   []int
 	matched []int
@@ -401,7 +400,6 @@ func (om *outlineMatch) addInto(dest *outlineMatch, xlate []scanio.Token) []scan
 		dest.bar.Write(b)
 		xlate = append(xlate, dest.bar.Take())
 	}
-	offset := om.offset - dest.offset
 
 	var destGroup int
 	if i := len(dest.group) - 1; i >= 0 {
@@ -415,7 +413,7 @@ func (om *outlineMatch) addInto(dest *outlineMatch, xlate []scanio.Token) []scan
 			destGroup++
 			group = g
 		}
-		dest.push(destGroup, om.matched[i], om.block[i], xlate[i], om.nextArg[i], om.within[i].add(offset))
+		dest.push(destGroup, om.matched[i], om.block[i], xlate[i], om.nextArg[i], om.within[i])
 	}
 
 	return xlate
@@ -481,9 +479,7 @@ func (pc presentConfig) matchSectionIndex(match []int) int {
 
 // open resets receiver state and (re)opens its FileArena from the given store.
 func (pres *presentDay) open(st store) (rerr error) {
-	defer func() {
-		pres.sc.Reset(scanio.Open(pres.FileArena))
-	}()
+	defer func() { pres.sc.Reset(pres.FileArena) }()
 
 	if err := pres.reset(); err != nil {
 		return err
@@ -612,7 +608,6 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 			}
 		}()
 
-		// TODO run the byteRange => scanio.Token conversion up through the section struct type
 		// TODO rework scanning around a FileArena
 		// TODO factor out a batter scanner v2, aka scanio.Rescanner from what everges
 
@@ -620,15 +615,17 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		// head, and then copy the head
 		cur := ed.CursorAt(0)
 		if sec := pres.sections[yesterdaySection]; sec.id != 0 {
-			cur.To(int(sec.start))
+			cur.To(sec.Start())
 		}
 
 		// write the new today section header
 		fmt.Fprintf(cur, "# %v\n\n", pres.date)
 
 		// track yesterday body remnant for potential header elision
-		yesterday := pres.sections[yesterdaySection]
-		remnant := scanio.MakeArea(pres.Ref(int(yesterday.body.start), int(yesterday.body.end)))
+		var remnant scanio.Area
+		if yesterday := pres.sections[yesterdaySection]; !yesterday.Empty() {
+			remnant.Add(yesterday.body())
+		}
 		remove := func(tok scanio.Token) scanio.Token {
 			remnant.Sub(tok)
 			ed.Remove(tok)
@@ -647,22 +644,21 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 				fmt.Fprintf(cur, "## %v\n\n", name)
 			} else if !pres.sectionRemains[i] {
 				// carry forward non-remnant sub-sections (e.g. TODO and WIP)
-				cur.Insert(remove(pres.Ref(int(sec.start), int(sec.end))))
+				cur.Insert(remove(sec.Token))
 			} else {
 				// leave remnant sections behind (e.g. Done)
 
 				// elide yesterday sub-header if it would start out the day;
 				// i.e. this erases the "## Done" header inside each day
 				header := sec.header()
-				headerTok := pres.Ref(int(header.start), int(header.end))
 
-				if offset, headerRemains := remnant.Find(int(header.start)); headerRemains && offset == 0 {
+				if offset, headerRemains := remnant.Find(header.Start()); headerRemains && offset == 0 {
 					// TODO more configurable header elision/replacement?
-					remove(headerTok)
+					remove(header)
 				}
 
 				// move or copy the yesterday sub-header into today
-				cur.Insert(headerTok)
+				cur.Insert(header)
 			}
 
 			// TODO support pulling down future items

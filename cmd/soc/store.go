@@ -276,22 +276,6 @@ func (cf *pendingCreateFile) Cleanup() error {
 	return err
 }
 
-type byteRange struct {
-	start int64
-	end   int64
-}
-
-func (br byteRange) readerWithin(ra io.ReaderAt) *io.SectionReader {
-	n := br.end - br.start
-	return io.NewSectionReader(ra, br.start, n)
-}
-
-func (br byteRange) add(offset int64) byteRange {
-	br.start += offset
-	br.end += offset
-	return br
-}
-
 type writeState struct {
 	w   io.Writer
 	err error
