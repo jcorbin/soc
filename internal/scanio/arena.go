@@ -603,6 +603,57 @@ type Area struct {
 	ranges []byteRange
 }
 
+// Len return the total number of bytes in the Area's ranges.
+func (ar *Area) Len() (n int) {
+	for _, br := range ar.ranges {
+		n += br.len()
+	}
+	return n
+}
+
+// Size return the total number of bytes in the Area's ranges, but aligned with
+// standard file-like interfaces.
+func (ar *Area) Size() (n int64) {
+	for _, br := range ar.ranges {
+		n += int64(br.len())
+	}
+	return n
+}
+
+// ReadAt fills p with content from the receiver area's ranges.
+// The offset is within the area's virtual byte space.
+// Returns the number of bytes read and any read error or io.EOF if the read
+// saturated the area's final range.
+func (ar *Area) ReadAt(p []byte, off int64) (n int, err error) {
+	i := 0
+	for ; err == nil && len(p) > 0 && i < len(ar.ranges); i++ {
+		br := ar.ranges[i]
+		if off > 0 {
+			if m := int64(br.len()); m <= off {
+				off -= m
+				continue
+			}
+			br.start += int(off)
+			off = 0
+		}
+		if br.len() > len(p) {
+			br.end = br.start + len(p)
+		}
+		for err == nil && len(p) > 0 && br.len() > 0 {
+			var b []byte
+			b, err = ar.arena.bytes(br)
+			m := copy(p, b)
+			p = p[m:]
+			n += m
+			br.start += len(b)
+		}
+	}
+	if err == nil && i >= len(ar.ranges) {
+		err = io.EOF
+	}
+	return n, err
+}
+
 // WriteTo writes all area byte ranges into the given writer, returning the
 // number of bytes written and any write error.
 func (ar *Area) WriteTo(dest io.Writer) (n int64, err error) {
