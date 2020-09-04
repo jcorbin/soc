@@ -427,7 +427,9 @@ type presentConfig struct {
 
 type presentDay struct {
 	presentConfig
+
 	scanio.FileArena
+	loaded   bool
 	date     isotime.GrainedTime
 	sections []section
 	titles   []scanio.Token
@@ -481,11 +483,16 @@ func (pc presentConfig) matchSectionIndex(match []int) int {
 // It will either find a today section or a yesterday section.
 // Within whichever one it finds, it then looks for the names listed in
 // todaySectionNames.
-func (pres *presentDay) load(st store) error {
+func (pres *presentDay) load(st store) (rerr error) {
 	// close any prior storage reader
 	if err := pres.Close(); err != nil {
 		return err
 	}
+	defer func() {
+		if rerr == nil {
+			pres.loaded = true
+		}
+	}()
 
 	// reset internal storage state
 	{
@@ -494,6 +501,7 @@ func (pres *presentDay) load(st store) error {
 		pres.sections = make([]section, base, max)
 		pres.titles = make([]scanio.Token, base, max)
 		pres.arena.Reset()
+		pres.loaded = false
 	}
 
 	// open a new storage reader, and convert it for random access ala
@@ -698,7 +706,7 @@ func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) error
 // content, and presentDay.load() will be called to reload the newly written
 // state.
 func (pres *presentDay) update(st store, with func(w io.Writer) error) (rerr error) {
-	if !pres.Backed() {
+	if !pres.loaded {
 		if err := pres.load(st); err != nil && !errors.Is(err, errStoreNotExists) {
 			return err
 		}

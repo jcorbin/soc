@@ -802,12 +802,6 @@ type FileArena struct {
 	*arena
 }
 
-// Backed returns true only if the arena has been given a non-nil backing
-// io.ReaderAt; see Reset().
-func (fa *FileArena) Backed() bool {
-	return fa.arena != nil && fa.arena.back != nil
-}
-
 // Reset (re)initialized the receiver arena to be backed by the given file-like store.
 // If size is 0, back must implement a Size() or Stat() method similar to
 // strings.Reader or os.File. Any such stat error is returned, preempting arena
