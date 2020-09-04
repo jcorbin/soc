@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-09-01
+# 2020-09-03
 
 ## TODO
 
@@ -99,6 +99,25 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scanio]
+  - [dev] ended up with a convincing `Arena` abstraction over `FileArena`,
+    `ByteArena`, and `Token` as a sub-Arena
+  - mainly, this allows tokens taken from a limited section scan to remain
+    valid without translation out side the scope of that scan
+  - but it has many other secondary benefits, like consistent `io.ReaderAt`
+    implementation, and the ability to treat a section token as an arena
+- [cmd/soc]
+  - completed draft of `byteRange` to `scanio.Token` transition, enabled by the above `scanio.Arena` progress
+  - TODO percolate out the [scanio] progress
+  - TODO percolate out the [cmd/soc] refactor
+  - TODO phase back into item addition, now that nearly all debt TODOs are done
+
+# 2020-09-02
+
+- Started grappling with the [cmd/soc] `byteRange` to `scanio.Token` transition
+
+# 2020-09-01
 
 - [scanio] fix several latent bugs in `FileArena`
 - [cmd/soc] drop `readState`, switch fully to `scanio.FileArena`
