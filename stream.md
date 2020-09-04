@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-09-03
+# 2020-09-04
 
 ## TODO
 
@@ -99,6 +99,13 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scanio]
+  - [dev] resequenced yesterday's work sensibly, and started evolving
+    `Test_arean_ReadAt` into a broader suite of read tests; found quite a few
+    latent bugs in `arena.load
+
+# 2020-09-03
 
 - [scanio]
   - [dev] ended up with a convincing `Arena` abstraction over `FileArena`,
