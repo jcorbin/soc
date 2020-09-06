@@ -12,9 +12,9 @@ import (
 
 // CopyTokens writes bytes from all given tokens into dest, returning the
 // number of bytes written, and any error that stopped the capy.
-func CopyTokens(dest io.Writer, tokens ...Token) (written int64, err error) {
+func CopyTokens(dest io.Writer, tokens ...Token) (written int64, _ error) {
 	ranges := make([]byteRange, len(tokens))
-	for err == nil && len(tokens) > 0 {
+	for len(tokens) > 0 {
 		arena := tokens[0].arena
 		ranges = ranges[:0]
 		for i := 0; i <= len(tokens); i++ {
@@ -38,11 +38,13 @@ func CopyTokens(dest io.Writer, tokens ...Token) (written int64, err error) {
 			ranges = compactRanges(ranges)
 		}
 
-		var n int64
-		n, err = arena.writeInto(dest, ranges...)
-		written += n
+		m, err := arena.writeInto(dest, ranges...)
+		written += m
+		if err != nil {
+			return written, err
+		}
 	}
-	return written, err
+	return written, nil
 }
 
 func compactRanges(ranges []byteRange) []byteRange {
