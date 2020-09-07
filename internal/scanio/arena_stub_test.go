@@ -10,3 +10,22 @@ func (ta *TestArena) Ref(start, end int) (tok Token) {
 	tok.start, tok.end = start, end
 	return tok
 }
+
+func ArenaOf(x interface{}) interface{} {
+	switch val := x.(type) {
+	case FileArena:
+		return val.arena
+	case *FileArena:
+		return val.arena
+	case ByteArena:
+		return &val.arena
+	case *ByteArena:
+		return &val.arena
+	case Token:
+		return val.arena
+	case Area:
+		return val.arena
+	default:
+		return nil
+	}
+}
