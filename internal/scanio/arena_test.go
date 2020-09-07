@@ -4,11 +4,13 @@ import (
 	"fmt"
 	"io"
 	"io/ioutil"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/jcorbin/soc/internal/scanio"
 	. "github.com/jcorbin/soc/internal/scanio"
 )
 
@@ -368,6 +370,60 @@ func Test_arena_ReadAt(t *testing.T) {
 		far.SetBufSize(16)
 		testReader(t, far, lorem, loremOps...)
 	})
+}
+
+func TestToken_ReadAt(t *testing.T) {
+	var far FileArena
+	far.Reset(strings.NewReader(loremIpsum), 0)
+	far.SetBufSize(32)
+
+	sentPat := regexp.MustCompile(`(?s)\s*(.+?\.)\s*`)
+	sents := sentPat.FindAllStringSubmatchIndex(loremIpsum, -1)
+	if !assert.True(t, len(sents) > 2, "must have at least two sentences") {
+		return
+	}
+
+	tok := make([]scanio.Token, len(sents))
+	txt := make([]string, len(sents))
+	for i, match := range sents {
+		t.Run(fmt.Sprintf("sentence[%v]", i), func(t *testing.T) {
+			start, end := match[2], match[3]
+			tok[i] = far.Ref(start, end)
+			txt[i] = loremIpsum[start:end]
+			t.Logf("start:%v end:%v content:%q", start, end, txt[i])
+			testReader(t, tok[i], strings.NewReader(txt[i]), pruneOps(len(txt[i]),
+				readOp{0, 5},
+				readOp{5, 15},
+				readOp{10, 50},
+				readOp{10, 70},
+				readOp{30, 70},
+				readOp{10, 90},
+				readOp{30, 90},
+				readOp{60, 90},
+			)...)
+		})
+	}
+
+	t.Run("sub-Token in sentence[1]", func(t *testing.T) {
+		if assert.True(t, len(txt[1]) >= 20, "short second sentence") {
+			testReader(t,
+				tok[1].Ref(5, 15),
+				strings.NewReader(txt[1][5:15]),
+				readOp{0, 5},
+				readOp{0, 10},
+				readOp{5, 10},
+			)
+		}
+	})
+}
+
+func pruneOps(n int, ops ...readOp) []readOp {
+	for i, op := range ops {
+		if n < int(op.off)+op.n {
+			return ops[:i]
+		}
+	}
+	return ops
 }
 
 func testReader(t *testing.T, subject, target io.ReaderAt, ops ...readOp) {

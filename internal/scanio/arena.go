@@ -366,6 +366,32 @@ type Token struct {
 	arena Arena
 }
 
+// Size return token.Len() but compliant with expected file-like interfaces.
+func (token Token) Size() int64 {
+	return int64(token.len())
+}
+
+// ReadAt reads up to len(p) bytes from the token's arena content;
+// starting from token.Start() + off and up to token.End().
+func (token Token) ReadAt(p []byte, off int64) (n int, err error) {
+	off += int64(token.start)
+	if n := int64(token.end) - off; int64(len(p)) > n {
+		p = p[:n]
+	}
+	return token.arena.ReadAt(p, off)
+}
+
+// Ref returns a referent token within the tokens's arena range; basically it's
+// a Slice() alias so that a token may be treated as a sub-Arena.
+func (token Token) Ref(start, end int) Token { return token.Slice(start, end) }
+
+func (token Token) bytes(br byteRange) ([]byte, error) {
+	if br = br.add(token.start); br.end > token.end {
+		br.end = token.end
+	}
+	return token.arena.bytes(br)
+}
+
 func (ar *arena) bytes(br byteRange) ([]byte, error) {
 	ar.bufMu.Lock()
 	defer ar.bufMu.Unlock()
@@ -451,7 +477,8 @@ func (token Token) Len() int { return token.len() }
 // in-memory vs read on-demand from backing storage is implementation specific.
 //
 // It may only be implemented by internal "scanio" package types: primarily by
-// ByteArena and FileArena.
+// ByteArena and FileArena; secondarily by Token to reference a section within
+// one Arena as a sub-Arena.
 type Arena interface {
 	io.ReaderAt
 	Size() int64
@@ -462,6 +489,7 @@ type Arena interface {
 
 var (
 	_ Arena = &arena{}
+	_ Arena = Token{}
 	_ Arena = &ByteArena{}
 	_ Arena = &FileArena{}
 )
