@@ -215,17 +215,17 @@ func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 	}
 
 	// truncate up to buffer capacity
+	buf = buf[:cap(buf)]
 	n := rel.len()
-	if m := cap(buf); n <= m {
-		buf = buf[:m]
-	} else if m == 0 {
+	if m := len(buf); m == 0 {
 		if n > DefaultBufferSize {
 			n = DefaultBufferSize
 		}
 		buf = make([]byte, DefaultBufferSize)
-	} else {
+	} else if n > m {
 		n = m
 	}
+
 	req.end = req.start + n
 	ar.buf = buf[:0] // invalid until read succeeds below
 
@@ -941,7 +941,10 @@ func (fa *FileArena) RefAll() Token {
 // memory before falling back to a backing store read ( that will also cache
 // back to arena internal memory ).
 func (fa FileArena) ReadAt(p []byte, off int64) (n int, err error) {
-	if fa.arena == nil || fa.back == nil {
+	if fa.arena == nil {
+		return 0, nil
+	}
+	if fa.back == nil {
 		return 0, errNoBacking
 	}
 	fa.bufMu.Lock()
@@ -955,8 +958,9 @@ func (fa FileArena) ReadAt(p []byte, off int64) (n int, err error) {
 	for err == nil && len(p) > 0 {
 		br.start = br.end
 		br.end += len(p)
-		if br, err = fa.load(br); br.len() > 0 {
-			m := copy(p, fa.arena.buf[br.start:br.end])
+		var rel byteRange
+		if rel, err = fa.load(br); rel.len() > 0 {
+			m := copy(p, fa.arena.buf[rel.start:rel.end])
 			p = p[m:]
 			n += m
 			br.end = br.start + m

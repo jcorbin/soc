@@ -3,6 +3,7 @@ package scanio_test
 import (
 	"fmt"
 	"io"
+	"io/ioutil"
 	"strings"
 	"testing"
 
@@ -375,52 +376,9 @@ func testReader(t *testing.T, subject, target io.ReaderAt, ops ...readOp) {
 			op.run(t, subject, target)
 		}))
 	}
-}
-
-type readOp struct {
-	n   int
-	off int64
-}
-
-func (op readOp) run(t *testing.T, subject, target io.ReaderAt) {
-	ap := make([]byte, op.n)
-	bp := make([]byte, op.n)
-	an, ae := target.ReadAt(ap, op.off)
-	bn, be := subject.ReadAt(bp, op.off)
-	assert.Equal(t, readResult(ap, an), readResult(bp, bn), "expected output to match")
-	if ae == nil {
-		assert.NoError(t, be, "unexpected error")
-	} else {
-		assert.EqualError(t, be, ae.Error(), "expected error")
-	}
-	if t.Failed() {
-		t.Logf("expected n:%v err:%v", an, ae)
-		t.Logf("got n:%v err:%v", bn, be)
-	}
-}
-
-func readResult(p []byte, n int) string {
-	return byteResult(bytesRead(p, n))
-}
-
-func byteResult(b []byte, err error) string {
-	if err != nil {
-		return fmt.Sprintf("!ERROR(%v)", err)
-	}
-	return string(b)
-}
-
-func bytesRead(p []byte, n int) (b []byte, err error) {
-	defer func() {
-		if e := recover(); e != nil {
-			if er, ok := e.(error); ok {
-				err = er
-			} else {
-				err = fmt.Errorf("paniced: %v", e)
-			}
-		}
-	}()
-	return p[:n], nil
+	t.Run("full content", spiedTest(t, subject, target, func(t *testing.T, subject, target io.ReaderAt) {
+		assert.Equal(t, readerContent(target), readerContent(subject))
+	}))
 }
 
 func spiedTest(
@@ -460,9 +418,61 @@ func (ras readerAtSpy) Size() int64 {
 	return readerSize(ras.ReaderAt)
 }
 
+type readOp struct {
+	n   int
+	off int64
+}
+
+func (op readOp) run(t *testing.T, subject, target io.ReaderAt) {
+	ap := make([]byte, op.n)
+	bp := make([]byte, op.n)
+	an, ae := target.ReadAt(ap, op.off)
+	bn, be := subject.ReadAt(bp, op.off)
+	assert.Equal(t, readResult(ap, an), readResult(bp, bn), "expected output to match")
+	if ae == nil {
+		assert.NoError(t, be, "unexpected error")
+	} else {
+		assert.EqualError(t, be, ae.Error(), "expected error")
+	}
+	if t.Failed() {
+		t.Logf("expected n:%v err:%v", an, ae)
+		t.Logf("got n:%v err:%v", bn, be)
+	}
+}
+
+func readerContent(ra io.ReaderAt) string {
+	sz := readerSize(ra)
+	r := io.NewSectionReader(ra, 0, sz)
+	return byteResult(ioutil.ReadAll(r))
+}
+
 func readerSize(ra io.ReaderAt) int64 {
 	if szr, ok := ra.(interface{ Size() int64 }); ok {
 		return szr.Size()
 	}
 	return 0
+}
+
+func readResult(p []byte, n int) string {
+	return byteResult(bytesRead(p, n))
+}
+
+func byteResult(b []byte, err error) string {
+	if err != nil {
+		return fmt.Sprintf("!ERROR(%v)", err)
+	}
+	return string(b)
+}
+
+func bytesRead(p []byte, n int) (b []byte, err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			if er, ok := e.(error); ok {
+				err = er
+			} else {
+				err = fmt.Errorf("paniced: %v", e)
+			}
+		}
+	}()
+	return p[:n], nil
 }
