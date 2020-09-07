@@ -940,7 +940,7 @@ func (fa *FileArena) RefAll() Token {
 // ReadAt implements io.ReaderAt that first tries to copy out of arena internal
 // memory before falling back to a backing store read ( that will also cache
 // back to arena internal memory ).
-func (fa *FileArena) ReadAt(p []byte, off int64) (n int, err error) {
+func (fa FileArena) ReadAt(p []byte, off int64) (n int, err error) {
 	if fa.arena == nil || fa.back == nil {
 		return 0, errNoBacking
 	}
