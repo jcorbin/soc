@@ -87,6 +87,7 @@ func compactRanges(ranges []byteRange) []byteRange {
 
 var (
 	errNoArena    = errors.New("token has no arena")
+	errNilArena   = errors.New("arena is nil")
 	errNoBacking  = errors.New("arena has no backing store")
 	errLargeRead  = errors.New("token size exceeds arena buffer capacity")
 	errClosed     = errors.New("arena closed")
@@ -113,7 +114,9 @@ type arena struct {
 // the buffer when passed 0. Any arena load a after such a 0/nil reset
 // will allocate a DefaultBufferSize buffer.
 func (ar *arena) SetBufSize(bufSize int) {
-	if bufSize == 0 {
+	if ar == nil {
+		return
+	} else if bufSize == 0 {
 		ar.buf = nil
 	} else if len(ar.buf) > 0 {
 		old := ar.buf
@@ -131,6 +134,13 @@ func (ar *arena) setBack(back io.ReaderAt) {
 }
 
 func (ar *arena) writeInto(w io.Writer, brs ...byteRange) (written int64, rerr error) {
+	if ar == nil {
+		if len(brs) > 0 {
+			return 0, errNilArena
+		}
+		return 0, nil
+	}
+
 	ar.bufMu.Lock()
 	defer ar.bufMu.Unlock()
 
@@ -197,6 +207,9 @@ func (ar *arena) writeInto(w io.Writer, brs ...byteRange) (written int64, rerr e
 // the total virtual size, otherwise it is just the size of any in memory
 // content.
 func (ar *arena) Size() int64 {
+	if ar == nil {
+		return 0
+	}
 	ar.bufMu.Lock()
 	defer ar.bufMu.Unlock()
 	if ar.back == nil {
@@ -393,6 +406,10 @@ func (token Token) bytes(br byteRange) ([]byte, error) {
 }
 
 func (ar *arena) bytes(br byteRange) ([]byte, error) {
+	if ar == nil {
+		return nil, errNilArena
+	}
+
 	ar.bufMu.Lock()
 	defer ar.bufMu.Unlock()
 	rel, err := ar.load(br)
@@ -889,7 +906,7 @@ type ByteArena struct {
 // The returned token byte range is clipped to the [0, size] interval.
 // Returns the zero-Token if start > end.
 func (ar *arena) Ref(start, end int) (token Token) {
-	if start > end {
+	if ar == nil || start > end {
 		return token
 	}
 
@@ -922,11 +939,17 @@ func (ar *arena) Ref(start, end int) (token Token) {
 
 // RefN is a convenience for Ref(start, start + n)
 func (ar *arena) RefN(start, n int) Token {
+	if ar == nil {
+		return Token{}
+	}
 	return ar.Ref(start, start+n)
 }
 
 // RefAll a convenience for Ref(0, Size())
 func (ar *arena) RefAll() Token {
+	if ar == nil {
+		return Token{}
+	}
 	return ar.Ref(0, int(ar.Size()))
 }
 
