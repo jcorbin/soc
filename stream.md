@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-09-04
+# 2020-09-07
 
 ## TODO
 
@@ -99,6 +99,14 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scanio] percolate out `Arena` abstraction work
+  - we now have a convincing `ByteArena` / `FileArena` base with `Token`
+    providing logical sub-`Arena`s
+  - where an arena is "just a sized `io.ReaderAt` that can issue `Token`
+    referents"
+
+# 2020-09-04
 
 - [scanio]
   - [dev] resequenced yesterday's work sensibly, and started evolving
