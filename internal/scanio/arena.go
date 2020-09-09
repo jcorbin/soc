@@ -329,12 +329,14 @@ func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 		}
 	}
 
-	if n = load.len(); n == 0 {
+	// clip buffer to load window
+	n = load.len()
+	if n == 0 {
 		return byteRange{0, 0}, io.EOF
 	}
+	buf = buf[:n]
 
 	// do the read
-	buf = buf[:n]
 	n, err = ar.back.ReadAt(buf, int64(load.start))
 	buf = buf[:n]
 	ar.buf, ar.offset = buf, load.start
