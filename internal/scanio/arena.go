@@ -155,11 +155,10 @@ func (ar *arena) writeInto(w io.Writer, brs ...byteRange) (written int64, rerr e
 
 	// core logic of the copy loops below
 	copyRange := func(br byteRange) (int, error) {
-		rel, readErr := ar.load(br)
-		if rel.len() == 0 {
+		p, readErr := ar.load(br)
+		if len(p) == 0 {
 			return 0, readErr
 		}
-		p := ar.buf[rel.start:rel.end]
 		n, writeErr := w.Write(p)
 		if writeErr == nil && n != len(p) {
 			writeErr = io.ErrShortWrite
@@ -243,9 +242,9 @@ func (ar *arena) ReadAt(p []byte, off int64) (n int, err error) {
 	for err == nil && len(p) > 0 {
 		br.start = br.end
 		br.end += len(p)
-		var rel byteRange
-		if rel, err = ar.load(br); rel.len() > 0 {
-			m := copy(p, ar.buf[rel.start:rel.end])
+		var b []byte
+		if b, err = ar.load(br); len(b) > 0 {
+			m := copy(p, b)
 			p = p[m:]
 			n += m
 			br.end = br.start + m
@@ -270,13 +269,13 @@ func (ar *arena) knowSize() error {
 	return errNoBackSize
 }
 
-func (ar *arena) load(req byteRange) (rel byteRange, err error) {
+func (ar *arena) load(req byteRange) ([]byte, error) {
 	buf := ar.buf
-	rel = req.add(-ar.offset) // relativize
+	rel := req.add(-ar.offset) // relativize
 
 	// service from buffer if possible
 	if rel.start >= 0 && rel.end <= len(buf) {
-		return rel, nil
+		return ar.buf[rel.start:rel.end], nil
 	}
 
 	// any backing store error
@@ -286,13 +285,13 @@ func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 			errBack = errNoBacking
 		}
 		if errBack != nil {
-			return byteRange{}, fmt.Errorf("cannot load range %v: %w", req, errBack)
+			return nil, fmt.Errorf("cannot load range %v: %w", req, errBack)
 		}
 	}
 
 	// determine reader size if not yet known
 	if err := ar.knowSize(); err != nil {
-		return byteRange{}, err
+		return nil, err
 	}
 
 	// truncate up to buffer capacity
@@ -332,12 +331,12 @@ func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 	// clip buffer to load window
 	n = load.len()
 	if n == 0 {
-		return byteRange{0, 0}, io.EOF
+		return nil, io.EOF
 	}
 	buf = buf[:n]
 
 	// do the read
-	n, err = ar.back.ReadAt(buf, int64(load.start))
+	n, err := ar.back.ReadAt(buf, int64(load.start))
 	buf = buf[:n]
 	ar.buf, ar.offset = buf, load.start
 
@@ -356,7 +355,7 @@ func (ar *arena) load(req byteRange) (rel byteRange, err error) {
 		err = nil // erase EOF error as long as we didn't truncate the request
 	}
 
-	return rel, err
+	return ar.buf[rel.start:rel.end], err
 }
 
 func readerAtSize(ra io.ReaderAt) (int64, bool) {
@@ -414,11 +413,7 @@ func (ar *arena) bytes(br byteRange) ([]byte, error) {
 
 	ar.bufMu.Lock()
 	defer ar.bufMu.Unlock()
-	rel, err := ar.load(br)
-	if err != nil {
-		return nil, err
-	}
-	return ar.buf[rel.start:rel.end], nil
+	return ar.load(br)
 }
 
 // Bytes returns a reference to the token bytes within the internal arena buffer.
