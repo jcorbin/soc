@@ -323,6 +323,14 @@ type section struct {
 	scanStart int
 }
 
+func (sec section) Format(f fmt.State, c rune) {
+	if sec.scanning {
+		fmt.Fprintf(f, "scanning section#%v{@%v body+%v}", sec.id, sec.scanStart, sec.bodyStart)
+	} else {
+		fmt.Fprintf(f, "section #%v{%+v body+%v}", sec.id, sec.Token, sec.bodyStart)
+	}
+}
+
 func (sec section) header() scanio.Token { return sec.Token.Slice(0, sec.bodyStart) }
 func (sec section) body() scanio.Token   { return sec.Token.Slice(sec.bodyStart, -1) }
 
