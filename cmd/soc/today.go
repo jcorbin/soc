@@ -152,6 +152,11 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 	// add a new item based on the remaining args
 	if len(args) > 0 {
+		matchN := match.numGroups()
+		if matchN > 1 {
+			return fmt.Errorf("ambiguous today item selector, have %v matches", matchN)
+		}
+
 		// TODO afford easier disambiguation
 		err = ctx.today.edit(ctx.store, func(ed *scanio.Editor) error {
 			// TODO add new item under group
