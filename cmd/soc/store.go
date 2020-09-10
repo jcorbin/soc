@@ -203,7 +203,7 @@ func (fst *fsStore) create() (cleanupWriteCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &pendingCreateFile{File: f}, nil
+	return &pendingFile{File: f}, nil
 }
 
 func (fst *fsStore) update() (cleanupWriteCloser, error) {
@@ -214,65 +214,41 @@ func (fst *fsStore) update() (cleanupWriteCloser, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &pendingUpdateFile{File: f, dest: fst.filename}, nil
+	return &pendingFile{File: f, dest: fst.filename}, nil
 }
 
-type pendingUpdateFile struct {
+type pendingFile struct {
 	*os.File
 	dest   string
 	closed bool
 }
 
-func (uf *pendingUpdateFile) Close() error {
-	err := uf.Sync()
-
-	if cerr := uf.File.Close(); err == nil {
+func (pf *pendingFile) Close() (err error) {
+	if pf.closed {
+		return nil
+	}
+	if pf.dest != "" {
+		err = pf.Sync()
+	}
+	if cerr := pf.File.Close(); err == nil {
 		err = cerr
 	}
-
-	if err == nil {
-		err = os.Rename(uf.Name(), uf.dest)
+	pf.closed = true
+	if err == nil && pf.dest != "" {
+		err = os.Rename(pf.Name(), pf.dest)
 	}
-
-	uf.closed = err == nil
 	return err
 }
 
-func (uf *pendingUpdateFile) Cleanup() error {
-	if uf.closed {
+func (pf *pendingFile) Cleanup() error {
+	if pf.closed {
 		return nil
 	}
-	err := os.Remove(uf.Name())
-	if cerr := uf.Close(); err == nil {
+	err := os.Remove(pf.Name())
+	if cerr := pf.File.Close(); err == nil {
 		err = cerr
 	}
-	uf.closed = true
-	return err
-}
-
-type pendingCreateFile struct {
-	*os.File
-	closed bool
-}
-
-func (cf *pendingCreateFile) Close() error {
-	if cf.closed {
-		return nil
-	}
-	err := cf.File.Close()
-	cf.closed = err == nil
-	return err
-}
-
-func (cf *pendingCreateFile) Cleanup() error {
-	if cf.closed {
-		return nil
-	}
-	err := os.Remove(cf.Name())
-	if cerr := cf.File.Close(); err == nil {
-		err = cerr
-	}
-	cf.closed = true
+	pf.closed = true
 	return err
 }
 
