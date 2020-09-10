@@ -672,7 +672,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 // scanned stream's content. If with returns nil error, the editor content is
 // then written out to an atomic store update. If all of that succeeds, the
 // presentDay state is reloaded from the just-written stream file.
-func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) (rerr error) {
+func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) error {
 	// load if not already loaded
 	if !pres.loaded {
 		if err := pres.load(st); err != nil && !errors.Is(err, errStoreNotExists) {
@@ -680,8 +680,8 @@ func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) (rerr
 		}
 	}
 
-	// load editor and run with
-	var ed scanio.Editor
+	// load editor and run with()
+	var ed scanio.Editor // TODO re-usable instance carried on receiver?
 	if all := pres.RefAll(); !all.Empty() {
 		ed.Append(all)
 	}
@@ -689,33 +689,9 @@ func (pres *presentDay) edit(st store, with func(ed *scanio.Editor) error) (rerr
 		return err
 	}
 
-	// start pending atomic store update
-	cwc, err := st.update()
-	if errors.Is(err, errStoreNotExists) {
-		cwc, err = st.create()
-	}
-	if err != nil {
+	// save to store and reload if successful
+	if err := saveToStore(st, &ed); err != nil {
 		return err
 	}
-	defer func() {
-		if cerr := cwc.Cleanup(); rerr == nil {
-			rerr = cerr
-		}
-	}()
-
-	// write editor content
-	var ws writeState
-	ws.w = cwc
-	if _, err := ed.WriteTo(&ws); err != nil {
-		return err
-	}
-	if err := ws.err; err != nil {
-		return err
-	}
-	if err := cwc.Close(); err != nil {
-		return err
-	}
-
-	// reload
 	return pres.load(st)
 }

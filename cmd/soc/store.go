@@ -276,23 +276,22 @@ func (cf *pendingCreateFile) Cleanup() error {
 	return err
 }
 
-type writeState struct {
-	w   io.Writer
-	err error
-}
-
-func (ws *writeState) Write(p []byte) (n int, err error) {
-	if err = ws.err; err == nil {
-		n, err = ws.w.Write(p)
-		ws.err = err
+func saveToStore(st store, src io.WriterTo) (rerr error) {
+	cwc, err := st.update()
+	if errors.Is(err, errStoreNotExists) {
+		cwc, err = st.create()
 	}
-	return n, err
-}
-
-func (ws *writeState) WriteString(s string) (n int, err error) {
-	if err = ws.err; err == nil {
-		n, err = io.WriteString(ws.w, s)
-		ws.err = err
+	if err != nil {
+		return err
 	}
-	return n, err
+	defer func() {
+		if cerr := cwc.Cleanup(); rerr == nil {
+			rerr = cerr
+		}
+	}()
+
+	if _, err := src.WriteTo(cwc); err != nil {
+		return err
+	}
+	return cwc.Close()
 }
