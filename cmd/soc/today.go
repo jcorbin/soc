@@ -419,6 +419,35 @@ func (om *outlineMatch) addInto(dest *outlineMatch, xlate []scanio.Token) []scan
 	return xlate
 }
 
+func (om *outlineMatch) Format(f fmt.State, c rune) {
+	g, win, in := -1, 0, ""
+	for i := range om.group {
+		// break last line
+		if i > 0 {
+			io.WriteString(f, "\n")
+		}
+
+		// group bullet or hanging indent
+		if gi := om.group[i]; g != gi {
+			g = gi
+			win, _ = fmt.Fprintf(f, "%v)", g)
+			in = strings.Repeat(" ", win)
+		} else {
+			io.WriteString(f, in)
+		}
+
+		// data for each group item
+		fmt.Fprintf(f,
+			" matched #%v block:%v title:%q within:%+v nextArg:%v",
+			om.matched[i],
+			om.block[i],
+			om.title[i],
+			om.within[i],
+			om.nextArg[i],
+		)
+	}
+}
+
 type presentConfig struct {
 	sectionNames   []string
 	sectionRemains []bool
