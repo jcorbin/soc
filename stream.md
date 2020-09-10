@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-09-07
+# 2020-09-10
 
 ## TODO
 
@@ -99,6 +99,19 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scanio]
+  - improved arena nil safety
+  - refactored `arena.load` now that `arena.bytes` is the way in
+- [cmd/soc]
+  - refactor presentDay updating around `scanio.Editor`
+  - simplify and refactor over new `scanio.{Token,Arena}` base
+  - simplify write state tracking around editor
+  - refactoring around outline printing and matching
+  - NOTE this should finally conclude the side quest towards sufficient scanio
+    improvements to finally finish out item addition
+
+# 2020-09-07
 
 - [scanio] percolate out `Arena` abstraction work
   - we now have a convincing `ByteArena` / `FileArena` base with `Token`
