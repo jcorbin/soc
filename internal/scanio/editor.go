@@ -15,6 +15,57 @@ type Editor struct {
 	tmp     []Token      // scratch space
 }
 
+// Len returns the number of bytes stored within the editor's content space.
+func (ed *Editor) Len() (n int) {
+	for _, tok := range ed.content {
+		n += tok.Len()
+	}
+	return n
+}
+
+// Size returns the number of bytes stored within the editor's content space;
+// it's a type-punned copy of Len() for interface compliance reasons.
+func (ed *Editor) Size() (n int64) {
+	for _, tok := range ed.content {
+		n += int64(tok.Len())
+	}
+	return n
+}
+
+// ReadAt copies len(p) bytes starting at offset within the editor's content
+// space into p, returning the number of bytes copied.
+// Returns err = io.EOF if the last content byte was read, the only case that
+// can cause n < len(p).
+func (ed *Editor) ReadAt(p []byte, offset int64) (n int, err error) {
+	i := 0
+	for ; err == nil && len(p) > 0 && i < len(ed.content); i++ {
+		tok := ed.content[i]
+		if offset > 0 {
+			if m := int64(tok.len()); m <= offset {
+				offset -= m
+				continue
+			}
+			tok.start += int(offset)
+			offset = 0
+		}
+		if tok.len() > len(p) {
+			tok.end = tok.start + len(p)
+		}
+		for err == nil && len(p) > 0 && tok.len() > 0 {
+			var b []byte
+			b, err = tok.arena.bytes(tok.byteRange)
+			m := copy(p, b)
+			p = p[m:]
+			n += m
+			tok.start += len(b)
+		}
+	}
+	if err == nil && i >= len(ed.content) {
+		err = io.EOF
+	}
+	return n, err
+}
+
 type cursorData struct {
 	loc   int
 	conti int
