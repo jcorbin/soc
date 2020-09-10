@@ -691,6 +691,33 @@ func isContainer(t BlockType) bool {
 	}
 }
 
+// ParseMark parses a single block mark from the given line bytes, optionally
+// skipping past a fixed amount of prior expected indent.
+// Returns any parsed block mark and the line trailer bytes, or the zero Block
+// and all line bytes if no mark can be parsed.
+func ParseMark(prior int, line []byte) (Block, []byte) {
+	if len(line) > 0 {
+		if indent, cont := trimIndent(line, 0, prior); len(cont) > 0 {
+			if indent < prior {
+				return Block{}, line
+			}
+			if delim, width, cc := fence(cont, 3, '`', '~'); delim != 0 {
+				return Block{Codefence, delim, width, indent}, cc
+			}
+			if delim, width, _ := ruler(cont, '-', '_', '*'); delim != 0 {
+				return Block{Ruler, delim, width, indent}, nil
+			}
+			if delim, width, qc := quoteMarker(cont); delim != 0 {
+				return Block{Blockquote, delim, width, indent}, qc
+			}
+			if delim, width, lc := listMarker(cont); delim != 0 {
+				return Block{Item, delim, width, indent}, lc
+			}
+		}
+	}
+	return Block{}, line
+}
+
 func quoteMarker(line []byte) (delim byte, width int, cont []byte) {
 	if delim, width, tail := delimiter(line, 3, '>'); delim != 0 {
 		// TODO this wants to be able to consume a single virtual space from a tab, passing any remainder
