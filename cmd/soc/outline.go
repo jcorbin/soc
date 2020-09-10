@@ -69,7 +69,9 @@ type outline struct {
 // 		}
 // 	}
 type outlineScanner struct {
-	*bufio.Scanner // TODO integrate with arena
+	// TODO integrate with arena, mabye refactor into a
+	// bufio.Scanner v2 ala scanio.Rescanner
+	*bufio.Scanner
 
 	arena scanio.Arena
 	block scandown.BlockStack

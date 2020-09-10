@@ -608,9 +608,6 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 			}
 		}()
 
-		// TODO rework scanning around a FileArena
-		// TODO factor out a batter scanner v2, aka scanio.Rescanner from what everges
-
 		// if we found yesterday, cut stream content in half before/after its
 		// head, and then copy the head
 		cur := ed.CursorAt(0)
