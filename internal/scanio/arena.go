@@ -389,8 +389,10 @@ func (token Token) Size() int64 {
 // starting from token.Start() + off and up to token.End().
 func (token Token) ReadAt(p []byte, off int64) (n int, err error) {
 	off += int64(token.start)
-	if n := int64(token.end) - off; int64(len(p)) > n {
-		p = p[:n]
+	if m := int64(token.end) - off; m < 0 {
+		return 0, fmt.Errorf("Token.ReadAt offset:%v beyond token end:%v", off, token.end)
+	} else if int64(len(p)) > m {
+		p = p[:m]
 	}
 	return token.arena.ReadAt(p, off)
 }
