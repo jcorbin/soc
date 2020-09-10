@@ -444,6 +444,15 @@ func (token Token) Text() (string, error) {
 // the %v verb works like %s, unless given the + flag as in "%+v", then a debug
 // form is printed instead with the start/end offsets, and an arena identifier.
 func (token Token) Format(f fmt.State, c rune) {
+	if token.arena == nil {
+		if token.empty() {
+			io.WriteString(f, "<zero token>")
+		} else {
+			fmt.Fprintf(f, "<nil-arena token @%v:%v", token.start, token.end)
+		}
+		return
+	}
+
 	switch c {
 	case 'q':
 		if b, err := token.Bytes(); err != nil {

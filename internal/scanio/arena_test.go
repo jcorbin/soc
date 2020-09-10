@@ -27,9 +27,9 @@ func TestToken_Format(t *testing.T) {
 		fmt string
 		out string
 	}{
-		{zero, "%s", "!(ERROR token has no arena)"},
-		{zero, "%q", "!(ERROR token has no arena)"},
-		{zero, "%v", "!(ERROR token has no arena)"},
+		{zero, "%s", "<zero token>"},
+		{zero, "%q", "<zero token>"},
+		{zero, "%v", "<zero token>"},
 
 		{empty, "%s", ""},
 		{empty, "%q", `""`},
