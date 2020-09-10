@@ -266,6 +266,17 @@ type outlineMatch struct {
 	bar scanio.ByteArena
 }
 
+func (om *outlineMatch) numGroups() (n int) {
+	g := -1
+	for _, gi := range om.group {
+		if g != gi {
+			g = gi
+			n++
+		}
+	}
+	return n
+}
+
 func (om *outlineMatch) empty() bool {
 	return om == nil || len(om.group) == 0
 }
