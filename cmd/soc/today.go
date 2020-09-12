@@ -564,10 +564,14 @@ func (pres *presentDay) load(st store) (rerr error) {
 	}()
 
 	// mark opens a new section, retaining its title bytes for later use.
-	mark := func(i presentSection) {
+	mark := func(i presentSection) bool {
+		if pres.sections[i].id != 0 {
+			return false
+		}
 		fmt.Fprint(&pres.arena, &pres.sc.outline)
 		pres.sections[i] = pres.sc.openSection()
 		pres.titles[i] = pres.arena.Take()
+		return true
 	}
 
 	// scan the stream...
@@ -597,10 +601,9 @@ func (pres *presentDay) load(st store) (rerr error) {
 			if t.Equal(pres.date) {
 				mark(todaySection)
 			} else if t.Grain() == isotime.TimeGrainDay {
-				if len(pres.sections) > int(firstVarSection) {
+				if !mark(yesterdaySection) {
 					break
 				}
-				mark(yesterdaySection)
 			}
 			continue
 		}
