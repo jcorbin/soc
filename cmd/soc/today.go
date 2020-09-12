@@ -160,10 +160,51 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 		// TODO afford easier disambiguation
 		err = ctx.today.edit(ctx.store, func(ed *scanio.Editor) error {
-			// TODO add new item under group
-			// TODO using similar "remnant editor" approach to presentDay.collect
-			log.Printf("WIP add new %v item w/ %q", ctx.CommandHead(), args)
-			return errors.New("unimplemented")
+			if matchN > 0 {
+				i := len(match.within) - 1
+				within := match.within[i]
+				body := within.body().Trim("\n")
+
+				w := 0
+				for _, block := range match.block {
+					switch block.Type {
+					case scandown.Item, scandown.Blockquote:
+						w += block.Indent + block.Width
+					}
+				}
+
+				// TODO modify match state to retain last child to support
+				// proper ordinal logic below
+
+				var block scandown.Block
+				if first := body.Slice(0, body.IndexByte('\n')); !first.Empty() {
+					firstLine, _ := first.Bytes()
+					block, _ = scandown.ParseMark(w, firstLine) // TODO last ordinal+1
+					block.Indent -= w
+				} else if block = match.block[i]; block.Type == scandown.Item {
+					if block.Delim == '.' || block.Delim == ')' {
+						block.Width = 1
+					}
+					// TODO reset any ordinal
+				}
+
+				cur := ed.CursorAt(body.Start())
+				for _, arg := range args {
+					if block.Type == scandown.Heading {
+						if block.Width++; block.Width > 6 {
+							block.Type, block.Delim, block.Width = scandown.Item, '-', 2
+						}
+					}
+
+					mark := block.MarkString()
+					fmt.Fprintf(cur, "%s%s%s\n", strings.Repeat(" ", w), mark, arg) // TODO line wrap
+					if block.Type != scandown.Heading {
+						w += len(mark)
+					}
+				}
+			}
+
+			return nil
 		})
 		if err == nil {
 			match, args, err = doMatch(sec)
