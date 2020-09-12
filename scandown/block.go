@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 )
 
 // BlockStack tracks state for Phase 1 parsing of Markdown block structure
@@ -716,6 +718,89 @@ func ParseMark(prior int, line []byte) (Block, []byte) {
 		}
 	}
 	return Block{}, line
+}
+
+// MarkString returns a string prefix necessary to open the block.
+func (block Block) MarkString() string {
+	var sb strings.Builder
+	block.justWriteMark(&sb)
+	return sb.String()
+}
+
+func (block Block) writeMark(into io.StringWriter) (n int64, err error) {
+	writeString := func(s string) {
+		if err == nil {
+			var m int
+			m, err = into.WriteString(s)
+			n += int64(m)
+		}
+	}
+
+	in := strings.Repeat(" ", block.Indent)
+	switch block.Type {
+	case noBlock, Blank, Document, List, Paragraph, HTMLBlock:
+		writeString(in)
+
+	case Heading:
+		switch d := block.Delim; d {
+		case '#':
+			writeString(in)
+			writeString(strings.Repeat(string(d), block.Width))
+			writeString(" ")
+		case '=', '-':
+			writeString(in)
+			writeString(strings.Repeat(string(d), 3))
+		default:
+			return 0, fmt.Errorf("invalid Heading delim %q", d)
+		}
+
+	case Ruler:
+		switch d := block.Delim; d {
+		case '-', '_', '*':
+			writeString(in)
+			writeString(strings.Repeat(string(d), block.Width))
+		default:
+			return 0, fmt.Errorf("invalid Ruler delim %q", d)
+		}
+
+	case Codefence:
+		switch d := block.Delim; d {
+		case '`', '~':
+			writeString(in)
+			writeString(strings.Repeat(string(d), block.Width))
+			writeString(" ")
+		default:
+			return 0, fmt.Errorf("invalid Codefence delim %q", d)
+		}
+
+	case Blockquote:
+		d := block.Delim
+		if d != '>' {
+			return 0, fmt.Errorf("invalid BlockQuote delim %q", d)
+		}
+		writeString(in)
+		writeString(string(d))
+		writeString(" ")
+
+	case Item:
+		switch d := block.Delim; d {
+		case '-', '*':
+			writeString(in)
+			writeString(string(d))
+			writeString(" ")
+		case '.', ')':
+			writeString(in)
+			writeString(strconv.FormatInt(int64(block.Width), 10))
+			writeString(string(d))
+			writeString(" ")
+		default:
+			return 0, fmt.Errorf("invalid Item delim %q", d)
+		}
+
+	default:
+		return 0, fmt.Errorf("invalid block type %v", block.Type)
+	}
+	return n, err
 }
 
 func quoteMarker(line []byte) (delim byte, width int, cont []byte) {
