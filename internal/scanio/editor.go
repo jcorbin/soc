@@ -105,7 +105,7 @@ func (edc Cursor) Copy() Cursor { return edc.CursorAt(edc.Location()) }
 func (edc Cursor) Location() int { return edc.cursors[edc.id].loc }
 
 // To moves the cursor to the given location, truncated to the [0, Size] interval.
-func (edc Cursor) To(loc int) { edc.By(edc.Location() - loc) }
+func (edc Cursor) To(loc int) { edc.By(loc - edc.Location()) }
 
 // By moves the cursor by a relative offset foreward or backward, truncated to the [0, Size] interval.
 func (edc Cursor) By(off int) { edc.moveCursor(edc.id, off) }
