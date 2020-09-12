@@ -425,3 +425,30 @@ func subFmt(f fmt.State, arg interface{}) {
 		fmt.Fprint(f, arg)
 	}
 }
+
+type EditorRange struct {
+	*Editor
+	start Cursor
+	end   Cursor
+}
+
+func (er EditorRange) open() *io.SectionReader {
+	i, j := int64(er.start.Location()), int64(er.end.Location())
+	return io.NewSectionReader(er.Editor, i, j-i)
+}
+
+func (er EditorRange) Close() error {
+	err := er.start.Close()
+	if cerr := er.end.Close(); err == nil {
+		err = cerr
+	}
+	er.Editor = nil
+	return err
+}
+
+func (ed *Editor) Range(start, end int) (er EditorRange) {
+	er.Editor = ed
+	er.start = ed.CursorAt(start)
+	er.end = ed.CursorAt(end)
+	return er
+}
