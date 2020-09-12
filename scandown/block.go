@@ -926,6 +926,7 @@ func fence(line []byte, min int, marks ...byte) (fence byte, width int, tail []b
 }
 
 func ruler(line []byte, marks ...byte) (rule byte, width int, tail []byte) {
+	// TODO min width?
 	if rule = line[0]; !isByte(rule, marks...) {
 		return 0, 0, nil
 	}
