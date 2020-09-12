@@ -145,8 +145,7 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 
 	// match as many args as possible against prior items
 	// TODO also match against sibling sections
-	sec := ctx.today.sections[tod.index]
-	match, args, err := doMatch(sec)
+	match, args, err := doMatch(ctx.today.sections[tod.index])
 	if err != nil {
 		return err
 	}
@@ -207,7 +206,7 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 			return nil
 		})
 		if err == nil {
-			match, args, err = doMatch(sec)
+			match, args, err = doMatch(ctx.today.sections[tod.index])
 		}
 		if err != nil {
 			return err
@@ -239,7 +238,7 @@ func (tod todayServer) serve(ctx *context, req *socui.Request, res *socui.Respon
 	// }
 	// _, err := io.Copy(res, raw)
 
-	ctx.today.sc.Reset(sec.body())
+	ctx.today.sc.Reset(ctx.today.sections[tod.index].body())
 	return ctx.today.sc.printOutline(res, filter)
 }
 
