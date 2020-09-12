@@ -727,6 +727,39 @@ func (block Block) MarkString() string {
 	return sb.String()
 }
 
+func (block Block) AppendMark(into []byte) []byte {
+	var aw appendWriter
+	aw.buf = into
+	block.justWriteMark(&aw)
+	return aw.buf
+}
+
+func (block Block) WriteMarkInto(into io.Writer) (n int64, err error) {
+	if sw, ok := into.(io.StringWriter); ok {
+		return block.writeMark(sw)
+	}
+	var buf bytes.Buffer
+	buf.Grow(64)
+	if n, err = block.writeMark(&buf); err != nil {
+		return 0, err
+	}
+	return buf.WriteTo(into)
+}
+
+type resetStringWriter interface {
+	io.StringWriter
+	Reset()
+}
+
+func (block Block) justWriteMark(into resetStringWriter) {
+	if _, err := block.writeMark(into); err != nil {
+		into.Reset()
+		into.WriteString("!ERROR(")
+		into.WriteString(err.Error())
+		into.WriteString(")")
+	}
+}
+
 func (block Block) writeMark(into io.StringWriter) (n int64, err error) {
 	writeString := func(s string) {
 		if err == nil {
@@ -951,4 +984,31 @@ func trimIndent(line []byte, prior, limit int) (n int, tail []byte) {
 		}
 	}
 	return n, tail
+}
+
+type appendWriter struct {
+	buf  []byte
+	orig []byte
+}
+
+func (aw *appendWriter) Reset() {
+	if buf := aw.orig; buf != nil {
+		aw.buf = buf
+	}
+}
+
+func (aw *appendWriter) Write(p []byte) (n int, err error) {
+	if aw.orig == nil {
+		aw.orig = aw.buf
+	}
+	aw.buf = append(aw.buf, p...)
+	return len(p), nil
+}
+
+func (aw *appendWriter) WriteString(s string) (n int, err error) {
+	if aw.orig == nil {
+		aw.orig = aw.buf
+	}
+	aw.buf = append(aw.buf, s...)
+	return len(s), nil
 }
