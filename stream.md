@@ -72,7 +72,7 @@ The first half of `scandown` is now prototyped:
   - [cmd/soc] prior command state, like the ability to reference the last
     affected item, or to reply to a disambiguation prompt
 
-# 2020-09-10
+# 2020-09-11
 
 ## TODO
 
@@ -99,6 +99,18 @@ The first half of `scandown` is now prototyped:
     - remove: `drop todo/wip/done ...`
 
 ## Done
+
+- [scanio]
+  - improve debug formatting
+  - minor edge case fixes and improvements
+  - fix `Cursor.To`, which has been exactly backwards all along...
+  - drop `%q` quoted token formatting
+  - stream bytes through formatting methods, removing the latent size limit
+- [cmd/soc]
+  - [dev] basic item addition works!!!11
+  - TODO test and complete item addition
+
+# 2020-09-10
 
 - [scanio]
   - improved arena nil safety
