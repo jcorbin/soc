@@ -602,7 +602,7 @@ func (pres *presentDay) collect(st store, res *socui.Response) error {
 		// write the user a message on the way out
 		defer func() {
 			if pres.sections[yesterdaySection].id != 0 {
-				log.Printf("Created Today by rolling %q forward", pres.titles[yesterdaySection])
+				log.Printf("Created Today by rolling %s forward", pres.titles[yesterdaySection])
 			} else {
 				log.Printf("Created new Today section at top of stream")
 			}

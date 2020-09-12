@@ -89,7 +89,7 @@ func Test_ui(t *testing.T) {
 		// tomorrow
 		24*time.Hour,
 		cmd([]string{"today"}, expectLines(
-			`Created Today by rolling "2020-07-23" forward`,
+			`Created Today by rolling 2020-07-23 forward`,
 			"",
 			"# 2020-07-24",
 			"1. TODO",

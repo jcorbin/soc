@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"sort"
-	"strconv"
 	"sync"
 )
 
@@ -441,10 +440,10 @@ func (token Token) Text() (string, error) {
 	return string(b), err
 }
 
-// Token formats the token under the fmt.Printf family: the %s and %q verbs
-// load the tokens bytes and string print them, or any load error encountered;
-// the %v verb works like %s, unless given the + flag as in "%+v", then a debug
-// form is printed instead with the start/end offsets, and an arena identifier.
+// Token formats the token under the fmt.Printf family: the %s verb loads the
+// token's bytes and string prints them, or any load error encountered; the %v
+// verb works like %s, unless given the + flag as in "%+v", then a debug form
+// is printed instead with the start/end offsets, and an arena identifier.
 func (token Token) Format(f fmt.State, c rune) {
 	if token.arena == nil {
 		if token.empty() {
@@ -461,15 +460,6 @@ func (token Token) Format(f fmt.State, c rune) {
 	}
 
 	switch c {
-	case 'q':
-		if b, err := token.Bytes(); err != nil {
-			fmt.Fprintf(f, "!(ERROR %v)", err)
-		} else if prec, ok := f.Precision(); ok {
-			fmt.Fprintf(f, "%.*q", prec, b)
-		} else {
-			fmt.Fprintf(f, "%q", b)
-		}
-
 	case 'v', 's':
 		if b, err := token.Bytes(); err != nil {
 			fmt.Fprintf(f, "!(ERROR %v)", err)
@@ -632,7 +622,6 @@ func (ar *Area) AppendTokens(into []Token) []Token {
 // references would be formatted.
 // Provides offset information when formatted with %+v.
 func (ar Area) Format(f fmt.State, c rune) {
-	var quote bool
 	switch c {
 	case 'v':
 		if f.Flag('+') {
@@ -648,18 +637,11 @@ func (ar Area) Format(f fmt.State, c rune) {
 		}
 	case 's':
 
-	case 'q':
-		quote = true
-
 	default:
 		fmt.Fprintf(f, "!(ERROR invalid format verb %%%s)", string(c))
 	}
 
 	prec, havePrec := f.Precision()
-	if quote {
-		f.Write([]byte{'"'})
-	}
-
 	tok := Token{arena: ar.arena}
 	for _, br := range ar.ranges {
 		tok.byteRange = br
@@ -672,13 +654,7 @@ func (ar Area) Format(f fmt.State, c rune) {
 			b = b[:prec]
 		}
 
-		var m int
-		if quote {
-			q := strconv.Quote(string(b)) // TODO wasteful?
-			m, err = io.WriteString(f, q[1:len(q)-1])
-		} else {
-			m, err = f.Write(b)
-		}
+		m, err := f.Write(b)
 
 		if havePrec {
 			if prec -= m; prec <= 0 {
@@ -688,10 +664,6 @@ func (ar Area) Format(f fmt.State, c rune) {
 		if err != nil {
 			return
 		}
-	}
-
-	if quote {
-		f.Write([]byte{'"'})
 	}
 }
 

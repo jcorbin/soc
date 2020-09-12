@@ -28,19 +28,15 @@ func TestToken_Format(t *testing.T) {
 		out string
 	}{
 		{zero, "%s", "<zero token>"},
-		{zero, "%q", "<zero token>"},
 		{zero, "%v", "<zero token>"},
 
 		{empty, "%s", ""},
-		{empty, "%q", `""`},
 		{empty, "%v", ""},
 
 		{foo, "%s", "foo"},
-		{foo, "%q", `"foo"`},
 		{foo, "%v", "foo"},
 
 		{fbb, "%.6s", "foo ba"},
-		{fbb, "%.6q", `"foo ba"`},
 		{fbb, "%.6v", "foo ba"},
 	} {
 		t.Run(fmt.Sprintf("in:%v fmt:%q", tc.String(), tc.fmt), func(t *testing.T) {
