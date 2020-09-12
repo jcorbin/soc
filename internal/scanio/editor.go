@@ -255,16 +255,20 @@ func (edc Cursor) Insert(tokens ...Token) {
 
 // Write stores p into the editor arena, and then inserts a content token.
 func (edc Cursor) Write(p []byte) (int, error) {
-	n, err := edc.arena.Write(p)
+	if _, err := edc.arena.Write(p); err != nil {
+		return 0, err
+	}
 	edc.Insert(edc.arena.Take())
-	return n, err
+	return len(p), nil
 }
 
 // WriteString stores s into the editor arena, and then inserts a content token.
 func (edc Cursor) WriteString(s string) (int, error) {
-	n, err := edc.arena.WriteString(s)
+	if _, err := edc.arena.WriteString(s); err != nil {
+		return 0, err
+	}
 	edc.Insert(edc.arena.Take())
-	return n, err
+	return len(s), nil
 }
 
 // Remove removes any content bytes that overlap with the given tokens.
