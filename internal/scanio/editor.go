@@ -302,13 +302,15 @@ func (ed *Editor) Format(f fmt.State, c rune) {
 			return
 		}
 		first := true
+		at := 0
 		for i, tok := range ed.content {
 			if first {
 				first = false
 			} else {
 				f.Write([]byte{'\n'})
 			}
-			fmt.Fprintf(f, "content[%v]: %+v %q", i, tok, tok)
+			fmt.Fprintf(f, "content[%v]: @%v %+v %q", i, at, tok, tok)
+			at += tok.len()
 		}
 		for id, at := range ed.cursors {
 			if first {
