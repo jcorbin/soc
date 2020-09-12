@@ -459,18 +459,23 @@ func (token Token) Format(f fmt.State, c rune) {
 		return
 	}
 
-	switch c {
-	case 'v', 's':
-		if b, err := token.Bytes(); err != nil {
+	if c != 'v' && c != 's' {
+		fmt.Fprintf(f, "!(ERROR invalid format verb %%%s)", string(c))
+	}
+
+	prec, havePrec := f.Precision()
+	for br := token.byteRange; br.len() > 0; {
+		b, err := token.arena.bytes(br)
+		if err != nil {
 			fmt.Fprintf(f, "!(ERROR %v)", err)
-		} else if prec, ok := f.Precision(); ok {
+			break
+		}
+		if havePrec {
 			fmt.Fprintf(f, "%.*s", prec, b)
 		} else {
 			f.Write(b)
 		}
-
-	default:
-		fmt.Fprintf(f, "!(ERROR invalid format verb %%%s)", string(c))
+		br.start += len(b)
 	}
 }
 
@@ -642,27 +647,28 @@ func (ar Area) Format(f fmt.State, c rune) {
 	}
 
 	prec, havePrec := f.Precision()
-	tok := Token{arena: ar.arena}
 	for _, br := range ar.ranges {
-		tok.byteRange = br
-		b, err := tok.Bytes()
-		if err != nil {
-			fmt.Fprintf(f, "!(ERROR %v)", err)
-			return
-		}
-		if havePrec && len(b) > prec {
-			b = b[:prec]
-		}
-
-		m, err := f.Write(b)
-
-		if havePrec {
-			if prec -= m; prec <= 0 {
-				break
+		for br.len() > 0 {
+			b, err := ar.arena.bytes(br)
+			br.start += len(b)
+			if err != nil {
+				fmt.Fprintf(f, "!(ERROR %v)", err)
+				return
 			}
-		}
-		if err != nil {
-			return
+			if havePrec && len(b) > prec {
+				b = b[:prec]
+			}
+
+			m, err := f.Write(b)
+
+			if havePrec {
+				if prec -= m; prec <= 0 {
+					break
+				}
+			}
+			if err != nil {
+				return
+			}
 		}
 	}
 }
