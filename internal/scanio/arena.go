@@ -455,6 +455,11 @@ func (token Token) Format(f fmt.State, c rune) {
 		return
 	}
 
+	if c == 'v' && f.Flag('+') {
+		fmt.Fprintf(f, "%T(%p)@%v:%v", token.arena, token.arena, token.start, token.end)
+		return
+	}
+
 	switch c {
 	case 'q':
 		if b, err := token.Bytes(); err != nil {
@@ -465,13 +470,7 @@ func (token Token) Format(f fmt.State, c rune) {
 			fmt.Fprintf(f, "%q", b)
 		}
 
-	case 'v':
-		if f.Flag('+') {
-			fmt.Fprintf(f, "%T(%p)@%v:%v", token.arena, token.arena, token.start, token.end)
-			return
-		}
-		fallthrough
-	case 's':
+	case 'v', 's':
 		if b, err := token.Bytes(); err != nil {
 			fmt.Fprintf(f, "!(ERROR %v)", err)
 		} else if prec, ok := f.Precision(); ok {
