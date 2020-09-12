@@ -322,6 +322,8 @@ func (edc Cursor) WriteString(s string) (int, error) {
 	return len(s), nil
 }
 
+// TODO coalesce written content tokens
+
 // Remove removes any content bytes that overlap with the given tokens.
 func (ed *Editor) Remove(tokens ...Token) {
 	content := ed.content
